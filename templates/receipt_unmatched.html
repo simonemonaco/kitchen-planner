@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+
+{% block title %}Rivedi scontrino - Kitchen Planner{% endblock %}
+
+{% block content %}
+  <section class="toolbar">
+    <div>
+      <p class="eyebrow">Scontrino</p>
+      <h2>Prodotti da rivedere</h2>
+    </div>
+  </section>
+
+  <form class="list-panel" action="{{ url_for('receipt_add_unmatched') }}" method="post" data-receipt-review>
+    <datalist id="receipt-prior-options">
+      {% for prior in prior_options %}
+        <option
+          value="{{ prior.name }}"
+          data-id="{{ prior.id }}"
+          data-default-location="{{ prior.default_location or 'dispensa' }}"
+          data-typical-quantity="{{ prior.typical_quantity|qty }}"
+          data-typical-unit="{{ prior.typical_unit or '' }}">
+        </option>
+      {% endfor %}
+    </datalist>
+
+    <div class="item-list">
+      {% for row in rows %}
+        <article class="receipt-card" data-receipt-card>
+          <button class="remove-card" type="button" aria-label="Non aggiungere questo prodotto" data-remove-card>X</button>
+          <input type="hidden" name="include_row_ids" value="{{ row.id }}" data-include-row>
+          <input type="hidden" name="prior_id_{{ row.id }}" data-receipt-prior-id>
+          <div class="item-main">
+            <h3>{{ row.description }}</h3>
+            <p>{{ row.price|money }}</p>
+          </div>
+          <div class="receipt-manual-grid">
+            <label>
+              Nome prior
+              <input name="name_{{ row.id }}" list="receipt-prior-options" autocomplete="off" data-receipt-prior-name required>
+            </label>
+            <div class="field-grid">
+              <label>
+                Quantita'
+                <input name="quantity_{{ row.id }}" type="number" min="0.01" step="0.01" value="1" required data-receipt-quantity>
+              </label>
+              <label>
+                Unita'
+                <input name="unit_{{ row.id }}" value="pz" required data-receipt-unit>
+              </label>
+            </div>
+            <label>
+              Andra' in
+              <select name="location_{{ row.id }}" required data-receipt-location>
+                {% for key, label in locations.items() %}
+                  <option value="{{ key }}" {% if key == "dispensa" %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+            </label>
+          </div>
+        </article>
+      {% endfor %}
+    </div>
+
+    <div class="form-actions receipt-actions">
+      <button class="button" type="submit">Aggiungi alla cucina</button>
+    </div>
+  </form>
+{% endblock %}

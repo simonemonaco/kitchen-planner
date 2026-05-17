@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+
+{% block title %}Impostazioni - Kitchen Planner{% endblock %}
+
+{% block content %}
+  <section class="toolbar">
+    <div>
+      <p class="eyebrow">Impostazioni</p>
+      <h2>Gestione dati</h2>
+    </div>
+  </section>
+
+  <section class="stats-grid compact-stats" aria-label="Riepilogo dati">
+    <article class="stat">
+      <span>{{ stats.prior_count }}</span>
+      <p>Prodotti prior</p>
+    </article>
+    <article class="stat">
+      <span>{{ stats.inventory_count }}</span>
+      <p>Realizzazioni inventario</p>
+    </article>
+    <article class="stat">
+      <span>{{ stats.shopping_count }}</span>
+      <p>Voci lista spesa</p>
+    </article>
+    <article class="stat">
+      <span>{{ stats.history_count }}</span>
+      <p>Acquisti storici</p>
+    </article>
+  </section>
+
+  <section class="settings-grid">
+    <a class="settings-card" href="{{ url_for('priors') }}">
+      <h3>Database prodotti prior</h3>
+      <p>Visualizza e modifica nome, categoria, quantita' tipica, scadenza tipica, immagine e note.</p>
+    </a>
+  </section>
+{% endblock %}

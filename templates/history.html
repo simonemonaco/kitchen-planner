@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+
+{% block title %}Storico acquisti - Kitchen Planner{% endblock %}
+
+{% block content %}
+  <section class="toolbar">
+    <div>
+      <p class="eyebrow">Storico</p>
+      <h2>Acquisti registrati</h2>
+    </div>
+    <a class="button secondary" href="{{ url_for('shopping') }}">Lista spesa</a>
+  </section>
+
+  <section class="stats-grid compact-stats" aria-label="Riepilogo storico">
+    <article class="stat">
+      <span>{{ stats.total_purchases }}</span>
+      <p>Acquisti</p>
+    </article>
+    <article class="stat">
+      <span>{{ stats.total_cost|money }}</span>
+      <p>Spesa registrata</p>
+    </article>
+  </section>
+
+  <section class="list-panel">
+    {% if items %}
+      <div class="item-list">
+        {% for item in items %}
+          <article class="history-row">
+            <div class="product-media">
+              {% if item.picture %}
+                <img src="{{ item.picture }}" alt="{{ item.name }}">
+              {% else %}
+                <span>{{ item.name[:1] }}</span>
+              {% endif %}
+            </div>
+            <div class="item-main">
+              <h3>{{ item.name }}</h3>
+              <p>
+                {{ item.quantity|qty }} {{ item.unit }}
+                <span class="dot">.</span>
+                {{ item.purchased_at|datetime_it }}
+                {% if item.target_location %}
+                  <span class="dot">.</span>
+                  {{ locations[item.target_location] }}
+                {% endif %}
+              </p>
+              <div class="badges">
+                {% if item.category %}
+                  <span class="badge muted">{{ item.category }}</span>
+                {% endif %}
+                <span class="badge">Costo {{ item.cost|money }}</span>
+              </div>
+              {% if item.notes %}
+                <p class="notes">{{ item.notes }}</p>
+              {% endif %}
+            </div>
+          </article>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="empty-state">
+        <h3>Nessun acquisto registrato</h3>
+        <p>Quando segni una voce della lista come acquistata, apparira' qui con timestamp, quantita' e costo.</p>
+      </div>
+    {% endif %}
+  </section>
+{% endblock %}

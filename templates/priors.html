@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+
+{% block title %}Prodotti prior - Kitchen Planner{% endblock %}
+
+{% block content %}
+  <section class="toolbar">
+    <div>
+      <p class="eyebrow">Impostazioni</p>
+      <h2>Prodotti prior</h2>
+    </div>
+    <a class="button secondary" href="{{ url_for('settings') }}">Impostazioni</a>
+  </section>
+
+  <form class="search-form" method="get">
+    <label>
+      Cerca
+      <input name="q" value="{{ query }}" autocomplete="off" placeholder="Nome o categoria">
+    </label>
+    <button class="button" type="submit">Cerca</button>
+  </form>
+
+  <section class="list-panel">
+    {% if items %}
+      <div class="item-list">
+        {% for item in items %}
+          <article class="prior-row">
+            <div class="product-media">
+              {% if item.picture %}
+                <img src="{{ item.picture }}" alt="{{ item.name }}">
+              {% else %}
+                <span>{{ item.name[:1] }}</span>
+              {% endif %}
+            </div>
+            <div class="item-main">
+              <h3>{{ item.name }}</h3>
+              <p>
+                {{ item.category or "Senza categoria" }}
+                {% if item.typical_quantity %}
+                  <span class="dot">.</span>
+                  {{ item.typical_quantity|qty }} {{ item.typical_unit }}
+                {% endif %}
+                {% if item.typical_shelf_life_days %}
+                  <span class="dot">.</span>
+                  {{ item.typical_shelf_life_days }} giorni
+                {% endif %}
+                <span class="dot">.</span>
+                {{ locations[item.default_location] }}
+              </p>
+              <div class="badges">
+                <span class="badge muted">Inventario {{ item.inventory_count }}</span>
+                <span class="badge muted">Spesa {{ item.shopping_count }}</span>
+                <span class="badge muted">Storico {{ item.history_count }}</span>
+                {% if item.picture_source %}
+                  <span class="badge">{{ item.picture_source }}</span>
+                {% endif %}
+              </div>
+              {% if item.notes %}
+                <p class="notes">{{ item.notes }}</p>
+              {% endif %}
+            </div>
+            <div class="row-actions">
+              <a class="small-button secondary" href="{{ url_for('edit_prior', prior_id=item.id) }}">Modifica</a>
+            </div>
+          </article>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="empty-state">
+        <h3>Nessun prodotto prior</h3>
+        <p>Inserisci prodotti da inventario o lista spesa per creare automaticamente i prior.</p>
+      </div>
+    {% endif %}
+  </section>
+{% endblock %}

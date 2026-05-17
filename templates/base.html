@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Kitchen Planner{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <script src="{{ url_for('static', filename='prior_picker.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='receipt.js') }}" defer></script>
+  </head>
+  <body>
+    <header class="app-header">
+      <div>
+        <p class="eyebrow">Frigo e dispensa</p>
+        <h1>Kitchen Planner</h1>
+      </div>
+      <nav aria-label="Navigazione principale">
+        <a href="{{ url_for('index') }}">Inventario</a>
+        <a href="{{ url_for('shopping') }}">Lista spesa</a>
+        <a href="{{ url_for('history') }}">Storico</a>
+        <a class="primary-link" href="{{ url_for('add_inventory_item') }}">Nuovo prodotto</a>
+        <a class="settings-link" href="{{ url_for('settings') }}" aria-label="Impostazioni">Impostazioni</a>
+      </nav>
+    </header>
+
+    <main>
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          <section class="messages" aria-label="Messaggi">
+            {% for category, message in messages %}
+              <p class="message {{ category }}">{{ message }}</p>
+            {% endfor %}
+          </section>
+        {% endif %}
+      {% endwith %}
+
+      {% block content %}{% endblock %}
+    </main>
+
+    {% block page_scripts %}{% endblock %}
+  </body>
+</html>

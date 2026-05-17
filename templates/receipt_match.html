@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+
+{% block title %}Conferma scontrino - Kitchen Planner{% endblock %}
+
+{% block content %}
+  <section class="toolbar">
+    <div>
+      <p class="eyebrow">Scontrino</p>
+      <h2>Prodotti riconosciuti</h2>
+    </div>
+    <a class="button secondary" href="{{ url_for('receipt_upload') }}">Nuovo scontrino</a>
+  </section>
+
+  <form class="list-panel" action="{{ url_for('receipt_add_matched') }}" method="post">
+    {% if matched %}
+      <div class="item-list">
+        {% for row in matched %}
+          <article class="receipt-row">
+            <label class="check-row">
+              <input type="checkbox" name="selected_row_ids" value="{{ row.id }}" checked>
+              <span></span>
+            </label>
+            <div class="item-main">
+              <h3>{{ row.prior.name }}</h3>
+              <p>{{ row.description }} <span class="dot">.</span> {{ row.price|money }}</p>
+              <div class="badges">
+                <span class="badge muted">{{ row.prior.category or "Altro" }}</span>
+                <span class="badge muted">{{ locations[row.prior.default_location] }}</span>
+              </div>
+            </div>
+            <div class="field-grid receipt-fields">
+              <input type="hidden" name="matched_row_ids" value="{{ row.id }}">
+              <input type="hidden" name="prior_id_{{ row.id }}" value="{{ row.prior.id }}">
+              <label>
+                Quantita'
+                <input name="quantity_{{ row.id }}" type="number" min="0.01" step="0.01" value="{{ row.quantity|qty }}" required>
+              </label>
+              <label>
+                Unita'
+                <input name="unit_{{ row.id }}" value="{{ row.unit }}" required>
+              </label>
+            </div>
+          </article>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    {% for row in unmatched %}
+      <input type="hidden" name="unmatched_row_ids" value="{{ row.id }}">
+    {% endfor %}
+
+    {% if not matched %}
+      <div class="empty-state">
+        <h3>Nessun prodotto mappato</h3>
+        <p>Passa alla revisione manuale delle righe estratte.</p>
+      </div>
+    {% endif %}
+
+    <div class="form-actions receipt-actions">
+      <button class="button" type="submit">Aggiungi alla cucina</button>
+    </div>
+  </form>
+{% endblock %}

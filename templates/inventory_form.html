@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+
+{% block title %}
+  {% if mode == "edit" %}Modifica prodotto{% else %}Nuovo prodotto{% endif %} - Kitchen Planner
+{% endblock %}
+
+{% block content %}
+  <section class="form-shell">
+    <div class="form-heading">
+      <p class="eyebrow">Inventario</p>
+      <h2>{% if mode == "edit" %}Modifica prodotto{% else %}Nuovo prodotto{% endif %}</h2>
+    </div>
+
+    <form class="form-panel" method="post" data-prior-picker data-today="{{ today }}">
+      <input type="hidden" name="item_prior_id" value="{{ item.item_prior_id or '' }}" data-prior-id>
+      <input type="hidden" name="notes" value="{{ item.notes or '' }}">
+      <input type="hidden" name="expiry_estimated" value="{{ item.expiry_estimated or 0 }}" data-prior-expiry-estimated>
+
+      <label>
+        Nome prodotto
+        <input name="name" value="{{ item.name }}" required autocomplete="off" list="inventory-prior-options" data-prior-name>
+      </label>
+      <datalist id="inventory-prior-options">
+        {% for prior in prior_options %}
+          <option
+            value="{{ prior.name }}"
+            data-id="{{ prior.id }}"
+            data-default-location="{{ prior.default_location or 'dispensa' }}"
+            data-typical-quantity="{{ prior.typical_quantity|qty }}"
+            data-typical-unit="{{ prior.typical_unit or '' }}"
+            data-typical-shelf-life-days="{{ prior.typical_shelf_life_days or '' }}">
+          </option>
+        {% endfor %}
+      </datalist>
+
+      <div class="field-grid">
+        <label>
+          Quantita'
+          <input name="quantity" type="number" min="0.01" step="0.01" value="{{ item.quantity|qty }}" required data-prior-field="quantity">
+        </label>
+        <label>
+          Unita'
+          <input name="unit" value="{{ item.unit or 'pz' }}" required data-prior-field="unit">
+        </label>
+      </div>
+
+      <label>
+        Andra' in
+        <select name="location" required data-prior-field="location">
+          {% for key, label in locations.items() %}
+            <option value="{{ key }}" {% if item.location == key %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <label>
+        Scadenza
+        <input name="expiry_date" type="date" value="{{ item.expiry_date or '' }}" data-prior-expiry>
+      </label>
+
+      <div class="form-actions">
+        <a class="button secondary" href="{{ url_for('index') }}">Annulla</a>
+        <button class="button" type="submit">
+          {% if mode == "edit" %}Salva modifiche{% else %}Aggiungi{% endif %}
+        </button>
+      </div>
+    </form>
+  </section>
+{% endblock %}

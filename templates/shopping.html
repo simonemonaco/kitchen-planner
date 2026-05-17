@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+
+{% block title %}Lista spesa - Kitchen Planner{% endblock %}
+
+{% block content %}
+  <section class="toolbar">
+    <div>
+      <p class="eyebrow">Lista spesa</p>
+      <h2>Prodotti da acquistare</h2>
+    </div>
+    <a class="button secondary" href="{{ url_for('index') }}">Inventario</a>
+  </section>
+
+  <section class="two-column">
+    <form class="form-panel compact" method="post" data-prior-picker>
+      <h3>Aggiungi alla lista</h3>
+      <input type="hidden" name="item_prior_id" data-prior-id>
+      <input type="hidden" name="notes">
+      <label>
+        Nome prodotto
+        <input name="name" required autocomplete="off" list="shopping-prior-options" data-prior-name>
+      </label>
+      <datalist id="shopping-prior-options">
+        {% for prior in prior_options %}
+          <option
+            value="{{ prior.name }}"
+            data-id="{{ prior.id }}"
+            data-default-location="{{ prior.default_location or 'dispensa' }}"
+            data-typical-quantity="{{ prior.typical_quantity|qty }}"
+            data-typical-unit="{{ prior.typical_unit or '' }}"
+            data-typical-shelf-life-days="{{ prior.typical_shelf_life_days or '' }}">
+          </option>
+        {% endfor %}
+      </datalist>
+
+      <div class="field-grid">
+        <label>
+          Quantita'
+          <input name="quantity" type="number" min="0.01" step="0.01" value="1" required data-prior-field="quantity">
+        </label>
+        <label>
+          Unita'
+          <input name="unit" value="pz" required data-prior-field="unit">
+        </label>
+      </div>
+
+      <label>
+        Andra' in
+        <select name="target_location" required data-prior-field="target_location">
+          {% for key, label in locations.items() %}
+            <option value="{{ key }}" {% if key == "dispensa" %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+
+      <button class="button full" type="submit">Aggiungi</button>
+    </form>
+
+    <section class="list-panel">
+      {% if items %}
+        <div class="item-list">
+          {% for item in items %}
+            <article class="shopping-row">
+              <div class="product-media">
+                {% if item.picture %}
+                  <img src="{{ item.picture }}" alt="{{ item.name }}">
+                {% else %}
+                  <span>{{ item.name[:1] }}</span>
+                {% endif %}
+              </div>
+              <div class="item-main">
+                <h3>{{ item.name }}</h3>
+                <p>
+                  {{ item.quantity|qty }} {{ item.unit }}
+                  <span class="dot">.</span>
+                  {{ locations[item.target_location] }}
+                  {% if item.category %}
+                    <span class="dot">.</span>
+                    {{ item.category }}
+                  {% endif %}
+                  {% if item.typical_shelf_life_days %}
+                    <span class="dot">.</span>
+                    {{ item.typical_shelf_life_days }} giorni tipici
+                  {% endif %}
+                </p>
+                {% if item.notes %}
+                  <p class="notes">{{ item.notes }}</p>
+                {% endif %}
+              </div>
+
+              <form class="purchase-form" action="{{ url_for('purchase_shopping_item', item_id=item.id) }}" method="post">
+                <div class="field-grid">
+                  <label>
+                    Quantita'
+                    <input name="quantity" type="number" min="0.01" step="0.01" value="{{ item.quantity|qty }}" required>
+                  </label>
+                  <label>
+                    Unita'
+                    <input name="unit" value="{{ item.unit }}" required>
+                  </label>
+                </div>
+                <div class="field-grid">
+                  <label>
+                    Destinazione
+                    <select name="target_location" required>
+                      {% for key, label in locations.items() %}
+                        <option value="{{ key }}" {% if item.target_location == key %}selected{% endif %}>{{ label }}</option>
+                      {% endfor %}
+                    </select>
+                  </label>
+                  <label>
+                    Scadenza
+                    <input name="expiry_date" type="date">
+                  </label>
+                </div>
+                <div class="field-grid">
+                  <label>
+                    Costo
+                    <input name="cost" type="number" min="0" step="0.01">
+                  </label>
+                  <label>
+                    Acquistato il
+                    <input name="purchased_at" type="datetime-local" value="{{ now_local_value }}">
+                  </label>
+                </div>
+                <div class="form-actions inline">
+                  <button class="small-button" type="submit">Acquistato</button>
+                </div>
+              </form>
+
+              <form action="{{ url_for('delete_shopping', item_id=item.id) }}" method="post">
+                <button class="small-button danger" type="submit">Rimuovi</button>
+              </form>
+            </article>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="empty-state">
+          <h3>Lista vuota</h3>
+          <p>I prodotti finiti finiscono qui automaticamente. Puoi anche aggiungerli manualmente.</p>
+        </div>
+      {% endif %}
+    </section>
+  </section>
+{% endblock %}

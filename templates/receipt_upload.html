@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{% block title %}Aggiungi scontrino - Kitchen Planner{% endblock %}
+
+{% block content %}
+  <section class="form-shell">
+    <div class="form-heading">
+      <p class="eyebrow">Inventario</p>
+      <h2>Aggiungi scontrino</h2>
+    </div>
+
+    <form class="form-panel" action="{{ url_for('receipt_scan') }}" method="post" enctype="multipart/form-data" data-receipt-upload>
+      <label>
+        Foto scontrino
+        <input name="receipt_image" type="file" accept="image/*" capture="environment" data-receipt-image>
+      </label>
+
+      <label>
+        Testo letto
+        <textarea name="receipt_text" rows="10" data-receipt-text>{{ receipt_text or '' }}</textarea>
+      </label>
+      <p class="field-help">Carica una foto e premi "Leggi scontrino": l'OCR viene eseguito nel browser e puoi correggere il testo prima dell'invio.</p>
+
+      <div class="receipt-ocr-status is-hidden" data-receipt-ocr-status aria-live="polite" aria-busy="false">
+        <div class="receipt-spinner" aria-hidden="true"></div>
+        <div>
+          <p class="receipt-ocr-title">Sto leggendo lo scontrino...</p>
+          <p class="receipt-ocr-progress" data-receipt-ocr-progress>Preparazione OCR</p>
+        </div>
+      </div>
+
+      <div class="form-actions">
+        <a class="button secondary" href="{{ url_for('index') }}">Annulla</a>
+        <button class="button" type="submit" data-receipt-submit>Leggi scontrino</button>
+      </div>
+    </form>
+  </section>
+{% endblock %}
+
+{% block page_scripts %}
+  <script src="{{ url_for('static', filename='receipt_ocr.js') }}" defer></script>
+{% endblock %}

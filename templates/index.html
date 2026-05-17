@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+
+{% block title %}Inventario - Kitchen Planner{% endblock %}
+
+{% block content %}
+  <section class="toolbar">
+    <div>
+      <p class="eyebrow">Inventario</p>
+      <h2>Prodotti disponibili</h2>
+    </div>
+    <div class="actions">
+      <a class="button secondary" href="{{ url_for('shopping') }}">Lista spesa</a>
+      <a class="button secondary" href="{{ url_for('receipt_upload') }}">Aggiungi scontrino</a>
+      <a class="button" href="{{ url_for('add_inventory_item') }}">Aggiungi prodotto</a>
+    </div>
+  </section>
+
+  <section class="stats-grid" aria-label="Riepilogo">
+    <article class="stat">
+      <span>{{ stats.inventory_count }}</span>
+      <p>Prodotti totali</p>
+    </article>
+    <article class="stat">
+      <span>{{ stats.fridge_count }}</span>
+      <p>In frigo</p>
+    </article>
+    <article class="stat">
+      <span>{{ stats.pantry_count }}</span>
+      <p>In dispensa</p>
+    </article>
+    <article class="stat warning">
+      <span>{{ stats.expiring_count }}</span>
+      <p>In scadenza</p>
+    </article>
+    <article class="stat danger">
+      <span>{{ stats.expired_count }}</span>
+      <p>Scaduti</p>
+    </article>
+    <article class="stat">
+      <span>{{ stats.shopping_count }}</span>
+      <p>Da comprare</p>
+    </article>
+  </section>
+
+  <section class="filters" aria-label="Filtri inventario">
+    <a class="{% if not selected_location %}active{% endif %}" href="{{ url_for('index') }}">Tutto</a>
+    {% for key, label in locations.items() %}
+      <a class="{% if selected_location == key %}active{% endif %}" href="{{ url_for('index', location=key) }}">{{ label }}</a>
+    {% endfor %}
+  </section>
+
+  <section class="list-panel">
+    {% if items %}
+      <div class="item-list">
+        {% for item in items %}
+          <article class="item-row">
+            <div class="product-media">
+              {% if item.picture %}
+                <img src="{{ item.picture }}" alt="{{ item.name }}">
+              {% else %}
+                <span>{{ item.name[:1] }}</span>
+              {% endif %}
+            </div>
+            <div class="item-main">
+              <div>
+                <h3>{{ item.name }}</h3>
+                <p>
+                  {{ item.quantity|qty }} {{ item.unit }}
+                  <span class="dot">.</span>
+                  {{ locations[item.location] }}
+                  {% if item.category %}
+                    <span class="dot">.</span>
+                    {{ item.category }}
+                  {% endif %}
+                </p>
+              </div>
+              <div class="badges">
+                {% if item.typical_quantity %}
+                  <span class="badge muted">Tipico {{ item.typical_quantity|qty }} {{ item.typical_unit }}</span>
+                {% endif %}
+                {% if item.expiry_date %}
+                  {% if item.expiry_date < today %}
+                    <span class="badge danger">Scaduto {{ item.expiry_date|date_it }}</span>
+                  {% else %}
+                    <span class="badge">Scade {{ item.expiry_date|date_it }}</span>
+                  {% endif %}
+                  {% if item.expiry_estimated %}
+                    <span class="badge muted">Stimata</span>
+                  {% endif %}
+                {% else %}
+                  <span class="badge muted">Senza scadenza</span>
+                {% endif %}
+              </div>
+              {% if item.notes %}
+                <p class="notes">{{ item.notes }}</p>
+              {% endif %}
+            </div>
+            <div class="row-actions">
+              <a class="small-button secondary" href="{{ url_for('edit_inventory_item', item_id=item.id) }}">Modifica</a>
+              <form action="{{ url_for('finish_inventory_item', item_id=item.id) }}" method="post">
+                <button class="small-button" type="submit">Finito</button>
+              </form>
+              <form action="{{ url_for('delete_inventory', item_id=item.id) }}" method="post">
+                <button class="small-button danger" type="submit">Elimina</button>
+              </form>
+            </div>
+          </article>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="empty-state">
+        <h3>Nessun prodotto registrato</h3>
+        <p>Aggiungi i prodotti presenti in frigo o dispensa per iniziare a tracciare scorte e scadenze.</p>
+        <a class="button" href="{{ url_for('add_inventory_item') }}">Aggiungi prodotto</a>
+      </div>
+    {% endif %}
+  </section>
+{% endblock %}
