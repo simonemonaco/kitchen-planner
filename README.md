@@ -76,6 +76,20 @@ Prima del primo avvio assicurati di avere in `.env`:
 ```bash
 SUPABASE_URL=...
 SUPABASE_KEY=...
+SECRET_KEY=...
+```
+
+Variabili opzionali:
+
+```bash
+# Abilita/disabilita lookup immagini esterno
+ENABLE_FOOD_IMAGE_LOOKUP=true
+
+# Seed prior iniziali a startup (consigliato false in produzione)
+SEED_DEFAULT_PRIORS=true
+
+# Esegue controlli schema+seed all'avvio app
+RUN_STARTUP_TASKS=true
 ```
 
 Apri `http://127.0.0.1:5000`.
@@ -85,3 +99,24 @@ Apri `http://127.0.0.1:5000`.
 ```bash
 python3 -m unittest
 ```
+
+## Deploy su Vercel
+
+Il progetto include una configurazione serverless pronta:
+
+- `vercel.json` instrada tutte le route su `api/index.py`
+- `api/index.py` espone l'app Flask per runtime Python Vercel
+
+Passi consigliati:
+
+1. Esegui lo schema Supabase (`scripts/supabase_schema.sql`) nel SQL Editor.
+2. Crea il progetto su Vercel collegando questa repo.
+3. Configura le Environment Variables in Vercel:
+	- `SUPABASE_URL`
+	- `SUPABASE_KEY`
+	- `SECRET_KEY`
+	- `SEED_DEFAULT_PRIORS=false`
+	- `RUN_STARTUP_TASKS=false`
+4. Deploy.
+
+Nota: in ambiente serverless e' preferibile evitare seed/controlli schema a ogni cold start.

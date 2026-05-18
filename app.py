@@ -5,7 +5,6 @@ import os
 import re
 from difflib import SequenceMatcher
 from datetime import UTC, date, datetime, timedelta
-from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
@@ -132,13 +131,35 @@ REQUIRED_TABLES = [
     "items_history",
 ]
 
+TRUTHY_VALUES = {"1", "true", "yes", "on"}
 
-def create_app(test_config: dict[str, Any] | None = None) -> Flask:
+
+def env_flag(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in TRUTHY_VALUES
+
+
+def should_run_startup_tasks() -> bool:
+    # On Vercel we avoid startup-side schema checks and seeding on cold starts.
+    default = not env_flag("VERCEL", False)
+    return env_flag("RUN_STARTUP_TASKS", default)
+
+
+def create_app(
+    test_config: dict[str, Any] | None = None,
+    *,
+    startup_checks: bool | None = None,
+) -> Flask:
+    if startup_checks is None:
+        startup_checks = should_run_startup_tasks()
+
     app = Flask(__name__, instance_relative_config=True)
     app.config.from_mapping(
-        SECRET_KEY="dev",
-        ENABLE_FOOD_IMAGE_LOOKUP=True,
-        SEED_DEFAULT_PRIORS=True,
+        SECRET_KEY=os.environ.get("SECRET_KEY", "dev"),
+        ENABLE_FOOD_IMAGE_LOOKUP=env_flag("ENABLE_FOOD_IMAGE_LOOKUP", True),
+        SEED_DEFAULT_PRIORS=env_flag("SEED_DEFAULT_PRIORS", not env_flag("VERCEL", False)),
         OPEN_FOOD_FACTS_USER_AGENT="KitchenPlanner/0.1 (local development)",
         OPEN_FOOD_FACTS_TIMEOUT=4,
     )
@@ -146,13 +167,12 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     if test_config:
         app.config.update(test_config)
 
-    Path(app.instance_path).mkdir(parents=True, exist_ok=True)
-
     register_template_helpers(app)
     register_routes(app)
 
-    with app.app_context():
-        init_db()
+    if startup_checks:
+        with app.app_context():
+            init_db()
 
     return app
 
@@ -241,6 +261,10 @@ def register_template_helpers(app: Flask) -> None:
 
 
 def register_routes(app: Flask) -> None:
+    @app.get("/healthz")
+    def healthz():
+        return {"status": "ok"}, 200
+
     @app.get("/")
     def index():
         location = request.args.get("location", "").strip()
