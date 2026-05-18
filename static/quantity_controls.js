@@ -40,7 +40,8 @@
   }
 
   function updateInputStep(input, unitField) {
-    input.step = String(resolveStep(input, unitField));
+    // Keep native number validation permissive for manual values; +/- buttons still use unit-aware increments.
+    input.step = "any";
   }
 
   function bindControl(control) {

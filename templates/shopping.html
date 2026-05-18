@@ -8,11 +8,22 @@
       <p class="eyebrow">Lista spesa</p>
       <h2>Prodotti da acquistare</h2>
     </div>
-    <a class="button secondary" href="{{ url_for('index') }}"><i class="fa-solid fa-boxes-stacked" aria-hidden="true"></i> Inventario</a>
+    <div class="actions">
+      <div class="shopping-mode-toggle-wrap">
+        <label class="shopping-mode-toggle">
+          <input type="checkbox" data-shopping-mode-toggle>
+          <span class="shopping-mode-labels">
+            <span class="shopping-mode-label">Inserimento</span>
+            <span class="shopping-mode-label">Spesa</span>
+          </span>
+          <span class="shopping-mode-slider"></span>
+        </label>
+      </div>
+    </div>
   </section>
 
-  <section class="two-column">
-    <form class="form-panel compact" method="post" data-prior-picker>
+  <section class="two-column shopping-layout" data-shopping-layout>
+    <form class="form-panel compact" method="post" data-prior-picker data-shopping-panel="inserimento">
       <h3>Aggiungi alla lista</h3>
       <input type="hidden" name="item_prior_id" data-prior-id>
       <input type="hidden" name="notes">
@@ -38,7 +49,7 @@
           Quantita'
           <div class="qty-control" data-qty-control data-qty-unit-selector="[name='unit']">
             <button type="button" class="small-button secondary icon-only" data-qty-action="decrease" aria-label="Diminuisci quantita'"><i class="fa-solid fa-minus" aria-hidden="true"></i></button>
-            <input name="quantity" type="number" min="0.01" step="0.01" value="1" required data-prior-field="quantity" data-qty-input>
+            <input name="quantity" type="number" min="0.01" step="any" value="1" required data-prior-field="quantity" data-qty-input>
             <button type="button" class="small-button secondary icon-only" data-qty-action="increase" aria-label="Aumenta quantita'"><i class="fa-solid fa-plus" aria-hidden="true"></i></button>
           </div>
         </label>
@@ -48,14 +59,11 @@
         </label>
       </div>
 
-      <label>
-        Andra' in
-        <select name="target_location" required data-prior-field="target_location">
-          {% for key, label in locations.items() %}
-            <option value="{{ key }}" {% if key == "dispensa" %}selected{% endif %}>{{ label }}</option>
-          {% endfor %}
-        </select>
-      </label>
+      <select name="target_location" required data-prior-field="target_location" hidden aria-hidden="true" tabindex="-1">
+        {% for key, label in locations.items() %}
+          <option value="{{ key }}" {% if key == "dispensa" %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
 
       <button class="button full" type="submit"><i class="fa-solid fa-plus" aria-hidden="true"></i> Aggiungi</button>
     </form>
@@ -72,76 +80,46 @@
                   <span>{{ item.name[:1] }}</span>
                 {% endif %}
               </div>
+              <label class="shopping-check" data-shopping-select-wrap>
+                <input type="checkbox" value="{{ item.id }}" data-shopping-select>
+                <span class="sr-only">Seleziona {{ item.name }}</span>
+              </label>
               <div class="item-main">
                 <h3>{{ item.name }}</h3>
-                <p>
-                  {{ item.quantity|qty }} {{ item.unit }}
-                  <span class="dot">.</span>
-                  {{ locations[item.target_location] }}
-                  {% if item.category %}
-                    <span class="dot">.</span>
-                    {{ item.category }}
-                  {% endif %}
-                  {% if item.typical_shelf_life_days %}
-                    <span class="dot">.</span>
-                    {{ item.typical_shelf_life_days }} giorni tipici
-                  {% endif %}
-                </p>
-                {% if item.notes %}
-                  <p class="notes">{{ item.notes }}</p>
-                {% endif %}
+                <p class="shopping-qty-line">{{ item.quantity|qty }} {{ item.unit }}</p>
               </div>
 
-              <form class="purchase-form" action="{{ url_for('purchase_shopping_item', item_id=item.id) }}" method="post">
-                <div class="field-grid">
-                  <label>
-                    Quantita'
-                    <div class="qty-control" data-qty-control data-qty-unit-selector="[name='unit']">
-                      <button type="button" class="small-button secondary icon-only" data-qty-action="decrease" aria-label="Diminuisci quantita'"><i class="fa-solid fa-minus" aria-hidden="true"></i></button>
-                      <input name="quantity" type="number" min="0.01" step="0.01" value="{{ item.quantity|qty }}" required data-qty-input>
-                      <button type="button" class="small-button secondary icon-only" data-qty-action="increase" aria-label="Aumenta quantita'"><i class="fa-solid fa-plus" aria-hidden="true"></i></button>
-                    </div>
-                  </label>
-                  <label>
-                    Unita'
-                    <input name="unit" value="{{ item.unit }}" required>
-                  </label>
-                </div>
-                <div class="field-grid">
-                  <label>
-                    Destinazione
-                    <select name="target_location" required>
-                      {% for key, label in locations.items() %}
-                        <option value="{{ key }}" {% if item.target_location == key %}selected{% endif %}>{{ label }}</option>
-                      {% endfor %}
-                    </select>
-                  </label>
-                  <label>
-                    Scadenza
-                    <input name="expiry_date" type="date">
-                  </label>
-                </div>
-                <div class="field-grid">
-                  <label>
-                    Costo
-                    <input name="cost" type="number" min="0" step="0.01">
-                  </label>
-                  <label>
-                    Acquistato il
-                    <input name="purchased_at" type="datetime-local" value="{{ now_local_value }}">
-                  </label>
-                </div>
-                <div class="form-actions inline">
-                  <button class="small-button" type="submit"><i class="fa-solid fa-basket-shopping" aria-hidden="true"></i> Acquistato</button>
-                </div>
-              </form>
+              <details class="shopping-details">
+                <summary class="small-button secondary"><i class="fa-solid fa-chevron-down" aria-hidden="true"></i> Dettagli</summary>
+                <div class="shopping-details-content">
+                  <p>{{ locations[item.target_location] }}</p>
+                  {% if item.category %}
+                    <p>{{ item.category }}</p>
+                  {% endif %}
+                  {% if item.typical_shelf_life_days %}
+                    <p>{{ item.typical_shelf_life_days }} giorni tipici</p>
+                  {% endif %}
+                  {% if item.notes %}
+                    <p class="notes">{{ item.notes }}</p>
+                  {% endif %}
 
-              <form action="{{ url_for('delete_shopping', item_id=item.id) }}" method="post">
-                <button class="small-button danger" type="submit"><i class="fa-solid fa-trash" aria-hidden="true"></i> Rimuovi</button>
-              </form>
+                  <form action="{{ url_for('delete_shopping', item_id=item.id) }}" method="post">
+                    <button class="small-button danger" type="submit"><i class="fa-solid fa-trash" aria-hidden="true"></i> Rimuovi</button>
+                  </form>
+                </div>
+              </details>
             </article>
           {% endfor %}
         </div>
+
+        <form id="shopping-complete-form" class="shopping-complete-bar" action="{{ url_for('complete_shopping_items') }}" method="post" data-shopping-complete-form>
+          <div>
+            <p class="eyebrow">Spesa</p>
+            <p class="shopping-complete-text" data-shopping-selection-status>Nessun prodotto selezionato</p>
+          </div>
+          <div data-shopping-selected-inputs></div>
+          <button class="button" type="submit" disabled data-shopping-complete-button>Completa l'acquisto</button>
+        </form>
       {% else %}
         <div class="empty-state">
           <h3>Lista vuota</h3>
@@ -150,4 +128,8 @@
       {% endif %}
     </section>
   </section>
+{% endblock %}
+
+{% block page_scripts %}
+  <script src="{{ url_for('static', filename='shopping.js') }}" defer></script>
 {% endblock %}

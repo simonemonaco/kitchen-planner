@@ -567,68 +567,55 @@ def register_routes(app: Flask) -> None:
             flash("Voce della lista non trovata.", "error")
             return redirect(url_for("shopping"))
 
-        quantity = parse_quantity(request.form.get("quantity"), item["quantity"])
-        unit = clean_text(request.form.get("unit"), item["unit"])
-        target_location = request.form.get("target_location") or item["target_location"]
-        typical_shelf_life_days = parse_optional_int(
-            request.form.get("typical_shelf_life_days"),
-            item["typical_shelf_life_days"],
+        error = complete_shopping_purchase(
+            item,
+            quantity=parse_quantity(request.form.get("quantity"), item["quantity"]),
+            unit=clean_text(request.form.get("unit"), item["unit"]),
+            target_location=request.form.get("target_location") or item["target_location"],
+            typical_shelf_life_days=parse_optional_int(
+                request.form.get("typical_shelf_life_days"),
+                item["typical_shelf_life_days"],
+            ),
+            cost=parse_optional_money(request.form.get("cost")),
+            purchased_at=parse_form_datetime(request.form.get("purchased_at")) or utc_now(),
+            expiry_input=request.form.get("expiry_date"),
         )
-        cost = parse_optional_money(request.form.get("cost"))
-        purchased_at = parse_form_datetime(request.form.get("purchased_at")) or utc_now()
-
-        if quantity <= 0:
-            flash("La quantita' acquistata deve essere maggiore di zero.", "error")
+        if error:
+            flash(error, "error")
             return redirect(url_for("shopping"))
 
-        if target_location not in LOCATIONS:
-            flash("Destinazione non valida.", "error")
-            return redirect(url_for("shopping"))
-
-        if typical_shelf_life_days != item["typical_shelf_life_days"]:
-            update_item_prior(
-                item["item_prior_id"],
-                {
-                    "name": item["name"],
-                    "category": item["category"],
-                    "typical_quantity": item["typical_quantity"],
-                    "typical_unit": item["typical_unit"],
-                    "typical_shelf_life_days": typical_shelf_life_days,
-                    "picture": item["picture"],
-                    "notes": item["prior_notes"],
-                },
-            )
-
-        expiry_date, expiry_estimated = resolve_expiry(
-            request.form.get("expiry_date"),
-            typical_shelf_life_days,
-        )
-
-        inventory_item_id = create_inventory_item(
-            item["item_prior_id"],
-            {
-                "quantity": quantity,
-                "unit": unit,
-                "location": target_location,
-                "expiry_date": expiry_date,
-                "expiry_estimated": expiry_estimated,
-                "notes": item["notes"] or "",
-            },
-        )
-        create_history_item(
-            {
-                "item_prior_id": item["item_prior_id"],
-                "inventory_item_id": inventory_item_id,
-                "purchased_at": purchased_at,
-                "quantity": quantity,
-                "unit": unit,
-                "cost": cost,
-                "target_location": target_location,
-                "notes": item["notes"] or "",
-            }
-        )
-        delete_shopping_item(item_id)
         flash("Acquisto registrato, storicizzato e spostato in inventario.", "success")
+        return redirect(url_for("shopping"))
+
+    @app.post("/shopping/complete")
+    def complete_shopping_items():
+        selected_ids = parse_id_list(request.form.getlist("selected_ids"))
+        if not selected_ids:
+            flash("Seleziona almeno un prodotto da completare.", "error")
+            return redirect(url_for("shopping"))
+
+        completed_count = 0
+        for item_id in selected_ids:
+            item = get_shopping_item(item_id)
+            if not item:
+                continue
+            error = complete_shopping_purchase(
+                item,
+                quantity=float(item["quantity"]),
+                unit=clean_text(item["unit"]),
+                target_location=item["target_location"],
+                typical_shelf_life_days=item["typical_shelf_life_days"],
+                cost=None,
+                purchased_at=utc_now(),
+                expiry_input=None,
+            )
+            if error:
+                flash(f"{item['name']}: {error}", "error")
+                continue
+            completed_count += 1
+
+        if completed_count:
+            flash(f"{completed_count} prodotti spostati in inventario.", "success")
         return redirect(url_for("shopping"))
 
     @app.post("/shopping/<int:item_id>/delete")
@@ -1564,6 +1551,77 @@ def get_shopping_item(item_id: int) -> dict[str, Any] | None:
 
 def delete_shopping_item(item_id: int) -> None:
     get_supabase().table("shopping_items").delete().eq("id", item_id).execute()
+
+
+def complete_shopping_purchase(
+    item: dict[str, Any],
+    quantity: float,
+    unit: str,
+    target_location: str,
+    typical_shelf_life_days: int | None,
+    cost: float | None,
+    purchased_at: str,
+    expiry_input: str | None,
+) -> str | None:
+    if quantity <= 0:
+        return "La quantita' acquistata deve essere maggiore di zero."
+
+    if target_location not in LOCATIONS:
+        return "Destinazione non valida."
+
+    if typical_shelf_life_days != item["typical_shelf_life_days"]:
+        update_item_prior(
+            item["item_prior_id"],
+            {
+                "name": item["name"],
+                "category": item["category"],
+                "typical_quantity": item["typical_quantity"],
+                "typical_unit": item["typical_unit"],
+                "typical_shelf_life_days": typical_shelf_life_days,
+                "picture": item["picture"],
+                "notes": item["prior_notes"],
+            },
+        )
+
+    expiry_date, expiry_estimated = resolve_expiry(expiry_input, typical_shelf_life_days)
+
+    inventory_item_id = create_inventory_item(
+        item["item_prior_id"],
+        {
+            "quantity": quantity,
+            "unit": unit,
+            "location": target_location,
+            "expiry_date": expiry_date,
+            "expiry_estimated": expiry_estimated,
+            "notes": item["notes"] or "",
+        },
+    )
+    create_history_item(
+        {
+            "item_prior_id": item["item_prior_id"],
+            "inventory_item_id": inventory_item_id,
+            "purchased_at": purchased_at,
+            "quantity": quantity,
+            "unit": unit,
+            "cost": cost,
+            "target_location": target_location,
+            "notes": item["notes"] or "",
+        }
+    )
+    delete_shopping_item(int(item["id"]))
+    return None
+
+
+def parse_id_list(values: list[str]) -> list[int]:
+    selected_ids: list[int] = []
+    for value in values:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            continue
+        if parsed not in selected_ids:
+            selected_ids.append(parsed)
+    return selected_ids
 
 
 def add_receipt_item_to_kitchen(
