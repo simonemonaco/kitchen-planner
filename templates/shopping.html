@@ -8,7 +8,7 @@
       <p class="eyebrow">Lista spesa</p>
       <h2>Prodotti da acquistare</h2>
     </div>
-    <a class="button secondary" href="{{ url_for('index') }}">Inventario</a>
+    <a class="button secondary" href="{{ url_for('index') }}"><i class="fa-solid fa-boxes-stacked" aria-hidden="true"></i> Inventario</a>
   </section>
 
   <section class="two-column">
@@ -36,7 +36,11 @@
       <div class="field-grid">
         <label>
           Quantita'
-          <input name="quantity" type="number" min="0.01" step="0.01" value="1" required data-prior-field="quantity">
+          <div class="qty-control" data-qty-control data-qty-unit-selector="[name='unit']">
+            <button type="button" class="small-button secondary icon-only" data-qty-action="decrease" aria-label="Diminuisci quantita'"><i class="fa-solid fa-minus" aria-hidden="true"></i></button>
+            <input name="quantity" type="number" min="0.01" step="0.01" value="1" required data-prior-field="quantity" data-qty-input>
+            <button type="button" class="small-button secondary icon-only" data-qty-action="increase" aria-label="Aumenta quantita'"><i class="fa-solid fa-plus" aria-hidden="true"></i></button>
+          </div>
         </label>
         <label>
           Unita'
@@ -53,7 +57,7 @@
         </select>
       </label>
 
-      <button class="button full" type="submit">Aggiungi</button>
+      <button class="button full" type="submit"><i class="fa-solid fa-plus" aria-hidden="true"></i> Aggiungi</button>
     </form>
 
     <section class="list-panel">
@@ -92,7 +96,11 @@
                 <div class="field-grid">
                   <label>
                     Quantita'
-                    <input name="quantity" type="number" min="0.01" step="0.01" value="{{ item.quantity|qty }}" required>
+                    <div class="qty-control" data-qty-control data-qty-unit-selector="[name='unit']">
+                      <button type="button" class="small-button secondary icon-only" data-qty-action="decrease" aria-label="Diminuisci quantita'"><i class="fa-solid fa-minus" aria-hidden="true"></i></button>
+                      <input name="quantity" type="number" min="0.01" step="0.01" value="{{ item.quantity|qty }}" required data-qty-input>
+                      <button type="button" class="small-button secondary icon-only" data-qty-action="increase" aria-label="Aumenta quantita'"><i class="fa-solid fa-plus" aria-hidden="true"></i></button>
+                    </div>
                   </label>
                   <label>
                     Unita'
@@ -124,12 +132,12 @@
                   </label>
                 </div>
                 <div class="form-actions inline">
-                  <button class="small-button" type="submit">Acquistato</button>
+                  <button class="small-button" type="submit"><i class="fa-solid fa-basket-shopping" aria-hidden="true"></i> Acquistato</button>
                 </div>
               </form>
 
               <form action="{{ url_for('delete_shopping', item_id=item.id) }}" method="post">
-                <button class="small-button danger" type="submit">Rimuovi</button>
+                <button class="small-button danger" type="submit"><i class="fa-solid fa-trash" aria-hidden="true"></i> Rimuovi</button>
               </form>
             </article>
           {% endfor %}

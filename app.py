@@ -3,13 +3,12 @@ from __future__ import annotations
 import json
 import os
 import re
-import sqlite3
 from difflib import SequenceMatcher
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 from flask import (
@@ -22,6 +21,9 @@ from flask import (
     session,
     url_for,
 )
+from dotenv import load_dotenv
+from postgrest.exceptions import APIError
+from supabase import Client, create_client
 
 
 LOCATIONS = {
@@ -45,6 +47,10 @@ CATEGORIES = [
 ]
 
 OPEN_FOOD_FACTS_SEARCH_URL = "https://world.openfoodfacts.org/api/v2/search"
+WIKIDATA_SEARCH_URL = "https://www.wikidata.org/w/api.php"
+
+
+load_dotenv()
 
 DEFAULT_PRIOR_ITEMS = [
     {
@@ -119,95 +125,18 @@ INGREDIENT_IMAGE_FALLBACKS = {
     "riso": "Rice",
 }
 
-
-SCHEMA = """
-PRAGMA foreign_keys = ON;
-
-CREATE TABLE IF NOT EXISTS item_prior (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL COLLATE NOCASE UNIQUE,
-    category TEXT,
-    typical_quantity REAL,
-    typical_unit TEXT,
-    typical_shelf_life_days INTEGER,
-    default_location TEXT NOT NULL DEFAULT 'dispensa'
-        CHECK(default_location IN ('frigo', 'dispensa')),
-    picture TEXT,
-    picture_source TEXT,
-    source_product_url TEXT,
-    notes TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS inventory_items (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    item_prior_id INTEGER NOT NULL,
-    quantity REAL NOT NULL DEFAULT 1,
-    unit TEXT NOT NULL DEFAULT 'pz',
-    location TEXT NOT NULL CHECK(location IN ('frigo', 'dispensa')),
-    expiry_date TEXT,
-    expiry_estimated INTEGER NOT NULL DEFAULT 0,
-    notes TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(item_prior_id) REFERENCES item_prior(id)
-);
-
-CREATE TABLE IF NOT EXISTS shopping_items (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    item_prior_id INTEGER NOT NULL,
-    quantity REAL NOT NULL DEFAULT 1,
-    unit TEXT NOT NULL DEFAULT 'pz',
-    target_location TEXT NOT NULL CHECK(target_location IN ('frigo', 'dispensa')),
-    notes TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(item_prior_id) REFERENCES item_prior(id)
-);
-
-CREATE TABLE IF NOT EXISTS items_history (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    item_prior_id INTEGER NOT NULL,
-    inventory_item_id INTEGER,
-    purchased_at TEXT NOT NULL,
-    quantity REAL NOT NULL DEFAULT 1,
-    unit TEXT NOT NULL DEFAULT 'pz',
-    cost REAL,
-    target_location TEXT CHECK(target_location IN ('frigo', 'dispensa')),
-    notes TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(item_prior_id) REFERENCES item_prior(id),
-    FOREIGN KEY(inventory_item_id) REFERENCES inventory_items(id) ON DELETE SET NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_item_prior_name
-ON item_prior(name);
-
-CREATE INDEX IF NOT EXISTS idx_inventory_prior
-ON inventory_items(item_prior_id);
-
-CREATE INDEX IF NOT EXISTS idx_inventory_location
-ON inventory_items(location);
-
-CREATE INDEX IF NOT EXISTS idx_inventory_expiry
-ON inventory_items(expiry_date);
-
-CREATE INDEX IF NOT EXISTS idx_shopping_prior
-ON shopping_items(item_prior_id, unit, target_location);
-
-CREATE INDEX IF NOT EXISTS idx_history_prior
-ON items_history(item_prior_id, purchased_at);
-
-CREATE VIEW IF NOT EXISTS prior_items AS
-SELECT * FROM item_prior;
-"""
+REQUIRED_TABLES = [
+    "item_prior",
+    "inventory_items",
+    "shopping_items",
+    "items_history",
+]
 
 
 def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     app = Flask(__name__, instance_relative_config=True)
     app.config.from_mapping(
         SECRET_KEY="dev",
-        DATABASE=str(Path(app.instance_path) / "kitchen.sqlite"),
         ENABLE_FOOD_IMAGE_LOOKUP=True,
         SEED_DEFAULT_PRIORS=True,
         OPEN_FOOD_FACTS_USER_AGENT="KitchenPlanner/0.1 (local development)",
@@ -219,7 +148,6 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
 
     Path(app.instance_path).mkdir(parents=True, exist_ok=True)
 
-    app.teardown_appcontext(close_db)
     register_template_helpers(app)
     register_routes(app)
 
@@ -229,15 +157,14 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     return app
 
 
-def get_db() -> sqlite3.Connection:
-    if "db" not in g:
-        g.db = sqlite3.connect(
-            current_app_config("DATABASE"),
-            detect_types=sqlite3.PARSE_DECLTYPES,
-        )
-        g.db.row_factory = sqlite3.Row
-        g.db.execute("PRAGMA foreign_keys = ON")
-    return g.db
+def get_supabase() -> Client:
+    if "supabase" not in g:
+        url = os.environ.get("SUPABASE_URL")
+        key = os.environ.get("SUPABASE_KEY")
+        if not url or not key:
+            raise RuntimeError("SUPABASE_URL e SUPABASE_KEY devono essere configurati.")
+        g.supabase = create_client(url, key)
+    return g.supabase
 
 
 def current_app_config(key: str) -> Any:
@@ -246,132 +173,31 @@ def current_app_config(key: str) -> Any:
     return current_app.config[key]
 
 
-def close_db(error: Exception | None = None) -> None:
-    db = g.pop("db", None)
-    if db is not None:
-        db.close()
-
-
 def init_db() -> None:
-    db = get_db()
-    migrate_database(db)
+    ensure_supabase_schema()
     if current_app_config("SEED_DEFAULT_PRIORS"):
         seed_default_priors()
-    db.commit()
 
 
-def migrate_database(db: sqlite3.Connection) -> None:
-    has_inventory = table_exists(db, "inventory_items")
-    has_shopping = table_exists(db, "shopping_items")
-    inventory_columns = table_columns(db, "inventory_items") if has_inventory else set()
-    shopping_columns = table_columns(db, "shopping_items") if has_shopping else set()
-    old_inventory = has_inventory and "item_prior_id" not in inventory_columns
-    old_shopping = has_shopping and "item_prior_id" not in shopping_columns
+def ensure_supabase_schema() -> None:
+    supabase = get_supabase()
+    missing_tables: list[str] = []
 
-    if not old_inventory and not old_shopping:
-        db.executescript(SCHEMA)
-        ensure_item_prior_columns(db)
-        return
+    for table_name in REQUIRED_TABLES:
+        try:
+            supabase.table(table_name).select("id").limit(1).execute()
+        except APIError as exc:
+            if exc.code == "PGRST205":
+                missing_tables.append(table_name)
+                continue
+            raise
 
-    inventory_rows = []
-    shopping_rows = []
-    if old_inventory:
-        inventory_rows = db.execute("SELECT * FROM inventory_items").fetchall()
-        db.execute("DROP TABLE inventory_items")
-    if old_shopping:
-        shopping_rows = db.execute("SELECT * FROM shopping_items").fetchall()
-        db.execute("DROP TABLE shopping_items")
-
-    db.executescript(SCHEMA)
-
-    for row in inventory_rows:
-        row_data = dict(row)
-        prior_id = ensure_item_prior(
-            {
-                "name": row_data.get("name", ""),
-                "category": "Altro",
-                "typical_quantity": row_data.get("quantity"),
-                "typical_unit": row_data.get("unit") or "pz",
-                "typical_shelf_life_days": row_data.get("shelf_life_days"),
-                "picture": "",
-                "notes": "",
-            },
-            fetch_picture=False,
+    if missing_tables:
+        joined = ", ".join(sorted(missing_tables))
+        raise RuntimeError(
+            "Schema Supabase non inizializzato. Tabelle mancanti: "
+            f"{joined}. Esegui lo script scripts/supabase_schema.sql nel SQL Editor di Supabase."
         )
-        db.execute(
-            """
-            INSERT INTO inventory_items (
-                item_prior_id, quantity, unit, location, expiry_date,
-                expiry_estimated, notes, created_at, updated_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                prior_id,
-                row_data.get("quantity") or 1,
-                row_data.get("unit") or "pz",
-                row_data.get("location") or "dispensa",
-                row_data.get("expiry_date"),
-                int(row_data.get("expiry_estimated") or 0),
-                row_data.get("notes"),
-                row_data.get("created_at") or utc_now(),
-                row_data.get("updated_at") or utc_now(),
-            ),
-        )
-
-    for row in shopping_rows:
-        row_data = dict(row)
-        prior_id = ensure_item_prior(
-            {
-                "name": row_data.get("name", ""),
-                "category": "",
-                "typical_quantity": row_data.get("quantity"),
-                "typical_unit": row_data.get("unit") or "pz",
-                "typical_shelf_life_days": row_data.get("shelf_life_days"),
-                "picture": "",
-                "notes": "",
-            },
-            fetch_picture=False,
-        )
-        db.execute(
-            """
-            INSERT INTO shopping_items (
-                item_prior_id, quantity, unit, target_location, notes, created_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                prior_id,
-                row_data.get("quantity") or 1,
-                row_data.get("unit") or "pz",
-                row_data.get("target_location") or "dispensa",
-                row_data.get("notes"),
-                row_data.get("created_at") or utc_now(),
-            ),
-        )
-
-
-def ensure_item_prior_columns(db: sqlite3.Connection) -> None:
-    columns = table_columns(db, "item_prior") if table_exists(db, "item_prior") else set()
-    if "default_location" not in columns:
-        db.execute(
-            """
-            ALTER TABLE item_prior
-            ADD COLUMN default_location TEXT NOT NULL DEFAULT 'dispensa'
-            """
-        )
-
-
-def table_exists(db: sqlite3.Connection, table_name: str) -> bool:
-    row = db.execute(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
-        (table_name,),
-    ).fetchone()
-    return row is not None
-
-
-def table_columns(db: sqlite3.Connection, table_name: str) -> set[str]:
-    return {row["name"] for row in db.execute(f"PRAGMA table_info({table_name})")}
 
 
 def register_template_helpers(app: Flask) -> None:
@@ -418,13 +244,20 @@ def register_routes(app: Flask) -> None:
     @app.get("/")
     def index():
         location = request.args.get("location", "").strip()
+        requested_view = request.args.get("view", "").strip().lower()
+        selected_location = location if location in LOCATIONS else ""
+        if requested_view in {"grid", "list"}:
+            view_mode = requested_view
+        else:
+            view_mode = "grid"
         items = list_inventory_items(location if location in LOCATIONS else None)
         stats = load_dashboard_stats()
         return render_template(
             "index.html",
             items=items,
             stats=stats,
-            selected_location=location,
+            selected_location=selected_location,
+            view_mode=view_mode,
         )
 
     @app.route("/inventory/add", methods=("GET", "POST"))
@@ -517,6 +350,37 @@ def register_routes(app: Flask) -> None:
         delete_inventory_item(item_id)
         flash("Prodotto eliminato dall'inventario.", "success")
         return redirect(url_for("index"))
+
+    @app.post("/inventory/<int:item_id>/adjust")
+    def adjust_inventory_quantity(item_id: int):
+        item = get_inventory_item(item_id)
+        if not item:
+            flash("Prodotto non trovato.", "error")
+            return redirect(url_for("index"))
+
+        direction = clean_text(request.form.get("direction")).lower()
+        if direction not in {"inc", "dec"}:
+            flash("Azione quantita' non valida.", "error")
+            return redirect(url_for("index"))
+
+        step = quantity_adjust_step(item.get("unit"), item.get("typical_quantity"))
+        current_quantity = float(item.get("quantity") or 0)
+        new_quantity = current_quantity + step if direction == "inc" else current_quantity - step
+
+        if new_quantity <= 0:
+            flash("La quantita' non puo' scendere sotto zero.", "error")
+            return redirect(url_for("index"))
+
+        payload = {
+            "quantity": new_quantity,
+            "unit": item["unit"],
+            "location": item["location"],
+            "expiry_date": item.get("expiry_date"),
+            "expiry_estimated": item.get("expiry_estimated") or 0,
+            "notes": item.get("notes") or "",
+        }
+        update_inventory_item(item_id, int(item["item_prior_id"]), payload)
+        return redirect(url_for("index", location=request.args.get("location", ""), view=request.args.get("view", "")))
 
     @app.get("/inventory/receipt")
     def receipt_upload():
@@ -899,7 +763,7 @@ def utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
-def get_selected_prior(prior_id: str | int | None, name: str | None) -> sqlite3.Row | None:
+def get_selected_prior(prior_id: str | int | None, name: str | None) -> dict[str, Any] | None:
     parsed_id = parse_optional_int(prior_id)
     cleaned_name = clean_text(name)
     if not parsed_id or not cleaned_name:
@@ -1095,11 +959,30 @@ def receipt_rows_by_id() -> dict[str, dict[str, Any]]:
     return {row["id"]: row for row in session.get("receipt_rows", [])}
 
 
-def default_prior_quantity(prior: sqlite3.Row | dict[str, Any] | None) -> float:
+def default_prior_quantity(prior: dict[str, Any] | None) -> float:
     if not prior:
         return 1
-    quantity = prior["typical_quantity"] if isinstance(prior, sqlite3.Row) else prior.get("typical_quantity")
+    quantity = prior.get("typical_quantity")
     return float(quantity or 1)
+
+
+def quantity_adjust_step(unit: str | None, typical_quantity: float | int | None = None) -> float:
+    if typical_quantity is not None:
+        try:
+            parsed_typical = float(typical_quantity)
+        except (TypeError, ValueError):
+            parsed_typical = 0
+        if parsed_typical > 0:
+            return parsed_typical
+
+    normalized = clean_text(unit).casefold()
+    if normalized in {"pz", "pc", "pezzo", "pezzi", "unita", "u"}:
+        return 1.0
+    if normalized in {"g", "gr", "grammo", "grammi", "ml"}:
+        return 100.0
+    if normalized in {"kg", "l", "lt"}:
+        return 1.0
+    return 1.0
 
 
 def prior_form_data(form: Any) -> dict[str, Any]:
@@ -1173,7 +1056,7 @@ def ensure_item_prior(
     fetch_picture: bool = True,
     update_existing: bool = True,
 ) -> int:
-    db = get_db()
+    supabase = get_supabase()
     name = data["name"]
     prior = None
     if existing_prior_id:
@@ -1181,15 +1064,13 @@ def ensure_item_prior(
         if selected_prior and selected_prior["name"].casefold() == name.casefold():
             prior = selected_prior
     if not prior:
-        prior = db.execute(
-            "SELECT * FROM item_prior WHERE lower(name) = lower(?)",
-            (name,),
-        ).fetchone()
+        response = supabase.table("item_prior").select("*").ilike("name", name).limit(1).execute()
+        prior = response.data[0] if response.data else None
 
     if prior:
         if not update_existing:
             return int(prior["id"])
-        merged = merge_prior_data(dict(prior), data)
+        merged = merge_prior_data(prior, data)
         if not merged.get("picture") and fetch_picture:
             food_profile = fetch_public_food_profile(merged["name"], merged.get("category"))
             merged = merge_external_prior_data(merged, food_profile)
@@ -1215,31 +1096,23 @@ def ensure_item_prior(
         food_profile = fetch_public_food_profile(name, prior_data.get("category"))
         prior_data = merge_external_prior_data(prior_data, food_profile)
 
-    cursor = db.execute(
-        """
-        INSERT INTO item_prior (
-            name, category, typical_quantity, typical_unit,
-            typical_shelf_life_days, default_location, picture, picture_source,
-            source_product_url, notes, updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            prior_data["name"],
-            prior_data.get("category"),
-            prior_data.get("typical_quantity"),
-            prior_data.get("typical_unit"),
-            prior_data.get("typical_shelf_life_days"),
-            prior_data.get("default_location"),
-            prior_data.get("picture"),
-            prior_data.get("picture_source"),
-            prior_data.get("source_product_url"),
-            prior_data.get("notes"),
-            utc_now(),
-        ),
-    )
-    db.commit()
-    return int(cursor.lastrowid)
+    payload = {
+        "name": prior_data["name"],
+        "category": prior_data.get("category"),
+        "typical_quantity": prior_data.get("typical_quantity"),
+        "typical_unit": prior_data.get("typical_unit"),
+        "typical_shelf_life_days": prior_data.get("typical_shelf_life_days"),
+        "default_location": prior_data.get("default_location"),
+        "picture": prior_data.get("picture"),
+        "picture_source": prior_data.get("picture_source"),
+        "source_product_url": prior_data.get("source_product_url"),
+        "notes": prior_data.get("notes"),
+        "updated_at": utc_now(),
+    }
+    response = supabase.table("item_prior").insert(payload).execute()
+    if not response.data:
+        raise RuntimeError("Inserimento prior non riuscito.")
+    return int(response.data[0]["id"])
 
 
 def merge_prior_data(current: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
@@ -1284,106 +1157,94 @@ def merge_external_prior_data(
 def update_item_prior(prior_id: int, data: dict[str, Any]) -> None:
     current = get_item_prior(prior_id)
     if current:
-        current_data = dict(current)
+        current_data = current
     else:
         current_data = {}
 
     def value(key: str) -> Any:
         return data[key] if key in data else current_data.get(key)
 
-    get_db().execute(
-        """
-        UPDATE item_prior
-        SET name = ?,
-            category = ?,
-            typical_quantity = ?,
-            typical_unit = ?,
-            typical_shelf_life_days = ?,
-            default_location = ?,
-            picture = ?,
-            picture_source = ?,
-            source_product_url = ?,
-            notes = ?,
-            updated_at = ?
-        WHERE id = ?
-        """,
-        (
-            value("name"),
-            value("category"),
-            value("typical_quantity"),
-            value("typical_unit"),
-            value("typical_shelf_life_days"),
-            value("default_location"),
-            value("picture"),
-            value("picture_source"),
-            value("source_product_url"),
-            value("notes"),
-            utc_now(),
-            prior_id,
-        ),
-    )
-    get_db().commit()
+    payload = {
+        "name": value("name"),
+        "category": value("category"),
+        "typical_quantity": value("typical_quantity"),
+        "typical_unit": value("typical_unit"),
+        "typical_shelf_life_days": value("typical_shelf_life_days"),
+        "default_location": value("default_location"),
+        "picture": value("picture"),
+        "picture_source": value("picture_source"),
+        "source_product_url": value("source_product_url"),
+        "notes": value("notes"),
+        "updated_at": utc_now(),
+    }
+    get_supabase().table("item_prior").update(payload).eq("id", prior_id).execute()
 
 
-def get_item_prior(prior_id: int) -> sqlite3.Row | None:
-    return get_db().execute(
-        "SELECT * FROM item_prior WHERE id = ?",
-        (prior_id,),
-    ).fetchone()
+def get_item_prior(prior_id: int) -> dict[str, Any] | None:
+    response = get_supabase().table("item_prior").select("*").eq("id", prior_id).limit(1).execute()
+    return response.data[0] if response.data else None
 
 
-def list_item_priors(query: str = "") -> list[sqlite3.Row]:
-    db = get_db()
+def list_item_priors(query: str = "") -> list[dict[str, Any]]:
+    supabase = get_supabase()
+    priors_response = supabase.table("item_prior").select("*").execute()
+    priors = priors_response.data or []
+
     if query:
-        pattern = f"%{query}%"
-        return db.execute(
-            """
-            SELECT
-                item_prior.*,
-                (SELECT COUNT(*) FROM inventory_items
-                 WHERE inventory_items.item_prior_id = item_prior.id) AS inventory_count,
-                (SELECT COUNT(*) FROM shopping_items
-                 WHERE shopping_items.item_prior_id = item_prior.id) AS shopping_count,
-                (SELECT COUNT(*) FROM items_history
-                 WHERE items_history.item_prior_id = item_prior.id) AS history_count
-            FROM item_prior
-            WHERE name LIKE ? OR category LIKE ?
-            ORDER BY lower(name)
-            """,
-            (pattern, pattern),
-        ).fetchall()
+        needle = query.casefold()
+        priors = [
+            row
+            for row in priors
+            if needle in (row.get("name") or "").casefold()
+            or needle in (row.get("category") or "").casefold()
+        ]
 
-    return db.execute(
-        """
-        SELECT
-            item_prior.*,
-            (SELECT COUNT(*) FROM inventory_items
-             WHERE inventory_items.item_prior_id = item_prior.id) AS inventory_count,
-            (SELECT COUNT(*) FROM shopping_items
-             WHERE shopping_items.item_prior_id = item_prior.id) AS shopping_count,
-            (SELECT COUNT(*) FROM items_history
-             WHERE items_history.item_prior_id = item_prior.id) AS history_count
-        FROM item_prior
-        ORDER BY lower(name)
-        """
-    ).fetchall()
+    inventory_rows = supabase.table("inventory_items").select("item_prior_id").execute().data or []
+    shopping_rows = supabase.table("shopping_items").select("item_prior_id").execute().data or []
+    history_rows = supabase.table("items_history").select("item_prior_id").execute().data or []
+
+    inventory_count: dict[int, int] = {}
+    shopping_count: dict[int, int] = {}
+    history_count: dict[int, int] = {}
+
+    for row in inventory_rows:
+        prior_id = int(row["item_prior_id"])
+        inventory_count[prior_id] = inventory_count.get(prior_id, 0) + 1
+    for row in shopping_rows:
+        prior_id = int(row["item_prior_id"])
+        shopping_count[prior_id] = shopping_count.get(prior_id, 0) + 1
+    for row in history_rows:
+        prior_id = int(row["item_prior_id"])
+        history_count[prior_id] = history_count.get(prior_id, 0) + 1
+
+    result = []
+    for prior in priors:
+        prior_id = int(prior["id"])
+        result.append(
+            prior
+            | {
+                "inventory_count": inventory_count.get(prior_id, 0),
+                "shopping_count": shopping_count.get(prior_id, 0),
+                "history_count": history_count.get(prior_id, 0),
+            }
+        )
+    return sorted(result, key=lambda row: (row.get("name") or "").casefold())
 
 
-def list_item_prior_options() -> list[sqlite3.Row]:
-    return get_db().execute(
-        """
-        SELECT
-            id, name, category, typical_quantity, typical_unit,
-            typical_shelf_life_days, default_location, picture, notes
-        FROM item_prior
-        ORDER BY lower(name)
-        """
-    ).fetchall()
+def list_item_prior_options() -> list[dict[str, Any]]:
+    response = get_supabase().table("item_prior").select(
+        "id,name,category,typical_quantity,typical_unit,typical_shelf_life_days,default_location,picture,notes"
+    ).execute()
+    return sorted(response.data or [], key=lambda row: (row.get("name") or "").casefold())
 
 
 def fetch_public_food_profile(name: str, category: str | None = None) -> dict[str, Any]:
     if not current_app_config("ENABLE_FOOD_IMAGE_LOOKUP"):
         return {}
+
+    wikidata_profile = fetch_wikidata_food_profile(name, category)
+    if wikidata_profile:
+        return wikidata_profile
 
     search_terms = " ".join(part for part in (name, category or "") if part).strip()
     if not search_terms:
@@ -1422,6 +1283,81 @@ def fetch_public_food_profile(name: str, category: str | None = None) -> dict[st
     return fallback_ingredient_profile(name)
 
 
+def fetch_wikidata_food_profile(name: str, category: str | None = None) -> dict[str, Any]:
+    search_terms = " ".join(part for part in (name, category or "") if part).strip()
+    if not search_terms:
+        return {}
+
+    search_params = {
+        "action": "wbsearchentities",
+        "search": search_terms,
+        "language": "it",
+        "type": "item",
+        "limit": 5,
+        "format": "json",
+    }
+    search_url = f"{WIKIDATA_SEARCH_URL}?{urlencode(search_params)}"
+    search_request = Request(
+        search_url,
+        headers={"User-Agent": current_app_config("OPEN_FOOD_FACTS_USER_AGENT")},
+    )
+
+    try:
+        with urlopen(search_request, timeout=current_app_config("OPEN_FOOD_FACTS_TIMEOUT")) as response:
+            search_payload = json.loads(response.read().decode("utf-8"))
+    except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError):
+        return {}
+
+    entity_ids = [item.get("id") for item in search_payload.get("search", []) if item.get("id")]
+    if not entity_ids:
+        return {}
+
+    entity_params = {
+        "action": "wbgetentities",
+        "ids": "|".join(entity_ids),
+        "props": "claims",
+        "format": "json",
+    }
+    entity_url = f"{WIKIDATA_SEARCH_URL}?{urlencode(entity_params)}"
+    entity_request = Request(
+        entity_url,
+        headers={"User-Agent": current_app_config("OPEN_FOOD_FACTS_USER_AGENT")},
+    )
+
+    try:
+        with urlopen(entity_request, timeout=current_app_config("OPEN_FOOD_FACTS_TIMEOUT")) as response:
+            entity_payload = json.loads(response.read().decode("utf-8"))
+    except (HTTPError, URLError, TimeoutError, OSError, json.JSONDecodeError):
+        return {}
+
+    entities = entity_payload.get("entities", {})
+    for entity_id in entity_ids:
+        entity = entities.get(entity_id) or {}
+        image_filename = extract_wikidata_image_filename(entity)
+        if not image_filename:
+            continue
+        encoded_filename = quote(image_filename)
+        return {
+            "picture": f"https://commons.wikimedia.org/wiki/Special:FilePath/{encoded_filename}",
+            "picture_source": "Wikimedia Commons",
+            "source_product_url": f"https://www.wikidata.org/wiki/{entity_id}",
+        }
+
+    return {}
+
+
+def extract_wikidata_image_filename(entity: dict[str, Any]) -> str | None:
+    claims = entity.get("claims") or {}
+    image_claims = claims.get("P18") or []
+    for claim in image_claims:
+        mainsnak = claim.get("mainsnak") or {}
+        datavalue = mainsnak.get("datavalue") or {}
+        value = datavalue.get("value")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
 def fallback_ingredient_profile(name: str) -> dict[str, Any]:
     ingredient = INGREDIENT_IMAGE_FALLBACKS.get(name.strip().lower())
     if not ingredient:
@@ -1450,116 +1386,91 @@ def first_category(value: str | None) -> str:
     return value.split(",")[0].strip()
 
 
-def list_inventory_items(location: str | None = None) -> list[sqlite3.Row]:
-    db = get_db()
-    query = """
-        SELECT
-            inventory_items.*,
-            item_prior.name,
-            item_prior.category,
-            item_prior.typical_quantity,
-            item_prior.typical_unit,
-            item_prior.typical_shelf_life_days,
-            item_prior.default_location,
-            item_prior.picture,
-            item_prior.picture_source,
-            item_prior.source_product_url,
-            item_prior.notes AS prior_notes
-        FROM inventory_items
-        JOIN item_prior ON item_prior.id = inventory_items.item_prior_id
-    """
-    params: tuple[Any, ...] = ()
+def load_item_prior_map(prior_ids: list[int]) -> dict[int, dict[str, Any]]:
+    unique_ids = sorted({int(prior_id) for prior_id in prior_ids if prior_id})
+    if not unique_ids:
+        return {}
+    response = get_supabase().table("item_prior").select("*").in_("id", unique_ids).execute()
+    return {int(row["id"]): row for row in (response.data or [])}
+
+
+def merge_item_with_prior(item: dict[str, Any], prior: dict[str, Any] | None) -> dict[str, Any]:
+    prior = prior or {}
+    return item | {
+        "name": prior.get("name", ""),
+        "category": prior.get("category", ""),
+        "typical_quantity": prior.get("typical_quantity"),
+        "typical_unit": prior.get("typical_unit"),
+        "typical_shelf_life_days": prior.get("typical_shelf_life_days"),
+        "default_location": prior.get("default_location"),
+        "picture": prior.get("picture"),
+        "picture_source": prior.get("picture_source"),
+        "source_product_url": prior.get("source_product_url"),
+        "prior_notes": prior.get("notes", ""),
+    }
+
+
+def list_inventory_items(location: str | None = None) -> list[dict[str, Any]]:
+    query = get_supabase().table("inventory_items").select("*")
     if location:
-        query += " WHERE inventory_items.location = ?"
-        params = (location,)
-    query += """
-        ORDER BY inventory_items.location,
-                 inventory_items.expiry_date IS NULL,
-                 inventory_items.expiry_date,
-                 lower(item_prior.name)
-    """
-    return db.execute(query, params).fetchall()
+        query = query.eq("location", location)
+    inventory_items = query.execute().data or []
+    prior_map = load_item_prior_map([int(item["item_prior_id"]) for item in inventory_items])
+    merged = [merge_item_with_prior(item, prior_map.get(int(item["item_prior_id"]))) for item in inventory_items]
+
+    return sorted(
+        merged,
+        key=lambda row: (
+            row.get("location") or "",
+            row.get("expiry_date") is None,
+            row.get("expiry_date") or "",
+            (row.get("name") or "").casefold(),
+        ),
+    )
 
 
-def get_inventory_item(item_id: int) -> sqlite3.Row | None:
-    return get_db().execute(
-        """
-        SELECT
-            inventory_items.*,
-            item_prior.name,
-            item_prior.category,
-            item_prior.typical_quantity,
-            item_prior.typical_unit,
-            item_prior.typical_shelf_life_days,
-            item_prior.default_location,
-            item_prior.picture,
-            item_prior.picture_source,
-            item_prior.source_product_url,
-            item_prior.notes AS prior_notes
-        FROM inventory_items
-        JOIN item_prior ON item_prior.id = inventory_items.item_prior_id
-        WHERE inventory_items.id = ?
-        """,
-        (item_id,),
-    ).fetchone()
+def get_inventory_item(item_id: int) -> dict[str, Any] | None:
+    response = get_supabase().table("inventory_items").select("*").eq("id", item_id).limit(1).execute()
+    if not response.data:
+        return None
+    item = response.data[0]
+    prior = get_item_prior(int(item["item_prior_id"]))
+    return merge_item_with_prior(item, prior)
 
 
 def create_inventory_item(item_prior_id: int, data: dict[str, Any]) -> int:
-    cursor = get_db().execute(
-        """
-        INSERT INTO inventory_items (
-            item_prior_id, quantity, unit, location, expiry_date,
-            expiry_estimated, notes, updated_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            item_prior_id,
-            data["quantity"],
-            data["unit"],
-            data["location"],
-            data.get("expiry_date"),
-            int(data.get("expiry_estimated") or 0),
-            data.get("notes"),
-            utc_now(),
-        ),
-    )
-    get_db().commit()
-    return int(cursor.lastrowid)
+    payload = {
+        "item_prior_id": item_prior_id,
+        "quantity": data["quantity"],
+        "unit": data["unit"],
+        "location": data["location"],
+        "expiry_date": data.get("expiry_date"),
+        "expiry_estimated": int(data.get("expiry_estimated") or 0),
+        "notes": data.get("notes"),
+        "updated_at": utc_now(),
+    }
+    response = get_supabase().table("inventory_items").insert(payload).execute()
+    if not response.data:
+        raise RuntimeError("Inserimento inventario non riuscito.")
+    return int(response.data[0]["id"])
 
 
 def update_inventory_item(item_id: int, item_prior_id: int, data: dict[str, Any]) -> None:
-    get_db().execute(
-        """
-        UPDATE inventory_items
-        SET item_prior_id = ?,
-            quantity = ?,
-            unit = ?,
-            location = ?,
-            expiry_date = ?,
-            expiry_estimated = ?,
-            notes = ?,
-            updated_at = ?
-        WHERE id = ?
-        """,
-        (
-            item_prior_id,
-            data["quantity"],
-            data["unit"],
-            data["location"],
-            data.get("expiry_date"),
-            int(data.get("expiry_estimated") or 0),
-            data.get("notes"),
-            utc_now(),
-            item_id,
-        ),
-    )
-    get_db().commit()
+    payload = {
+        "item_prior_id": item_prior_id,
+        "quantity": data["quantity"],
+        "unit": data["unit"],
+        "location": data["location"],
+        "expiry_date": data.get("expiry_date"),
+        "expiry_estimated": int(data.get("expiry_estimated") or 0),
+        "notes": data.get("notes"),
+        "updated_at": utc_now(),
+    }
+    get_supabase().table("inventory_items").update(payload).eq("id", item_id).execute()
 
 
 def delete_inventory_item(item_id: int) -> None:
-    get_db().execute("DELETE FROM inventory_items WHERE id = ?", (item_id,))
-    get_db().commit()
+    get_supabase().table("inventory_items").delete().eq("id", item_id).execute()
 
 
 def add_or_increment_shopping_item(
@@ -1569,96 +1480,66 @@ def add_or_increment_shopping_item(
     target_location: str,
     notes: str | None = None,
 ) -> int:
-    db = get_db()
-    existing = db.execute(
-        """
-        SELECT *
-        FROM shopping_items
-        WHERE item_prior_id = ?
-          AND unit = ?
-          AND target_location = ?
-        """,
-        (item_prior_id, unit, target_location),
-    ).fetchone()
+    supabase = get_supabase()
+    existing_response = (
+        supabase.table("shopping_items")
+        .select("*")
+        .eq("item_prior_id", item_prior_id)
+        .eq("unit", unit)
+        .eq("target_location", target_location)
+        .limit(1)
+        .execute()
+    )
+    existing = existing_response.data[0] if existing_response.data else None
 
     if existing:
-        db.execute(
-            """
-            UPDATE shopping_items
-            SET quantity = quantity + ?,
-                notes = CASE
-                    WHEN notes IS NULL OR notes = '' THEN ?
-                    WHEN ? IS NULL OR ? = '' THEN notes
-                    ELSE notes || '; ' || ?
-                END
-            WHERE id = ?
-            """,
-            (quantity, notes, notes, notes, notes, existing["id"]),
-        )
-        db.commit()
+        existing_notes = existing.get("notes") or ""
+        if not existing_notes:
+            merged_notes = notes or ""
+        elif not notes:
+            merged_notes = existing_notes
+        else:
+            merged_notes = f"{existing_notes}; {notes}"
+        supabase.table("shopping_items").update(
+            {
+                "quantity": float(existing.get("quantity") or 0) + quantity,
+                "notes": merged_notes,
+            }
+        ).eq("id", existing["id"]).execute()
         return int(existing["id"])
 
-    cursor = db.execute(
-        """
-        INSERT INTO shopping_items (
-            item_prior_id, quantity, unit, target_location, notes
-        )
-        VALUES (?, ?, ?, ?, ?)
-        """,
-        (item_prior_id, quantity, unit, target_location, notes),
-    )
-    db.commit()
-    return int(cursor.lastrowid)
+    response = supabase.table("shopping_items").insert(
+        {
+            "item_prior_id": item_prior_id,
+            "quantity": quantity,
+            "unit": unit,
+            "target_location": target_location,
+            "notes": notes,
+        }
+    ).execute()
+    if not response.data:
+        raise RuntimeError("Inserimento shopping non riuscito.")
+    return int(response.data[0]["id"])
 
 
-def list_shopping_items() -> list[sqlite3.Row]:
-    return get_db().execute(
-        """
-        SELECT
-            shopping_items.*,
-            item_prior.name,
-            item_prior.category,
-            item_prior.typical_quantity,
-            item_prior.typical_unit,
-            item_prior.typical_shelf_life_days,
-            item_prior.default_location,
-            item_prior.picture,
-            item_prior.picture_source,
-            item_prior.source_product_url,
-            item_prior.notes AS prior_notes
-        FROM shopping_items
-        JOIN item_prior ON item_prior.id = shopping_items.item_prior_id
-        ORDER BY shopping_items.target_location, lower(item_prior.name)
-        """
-    ).fetchall()
+def list_shopping_items() -> list[dict[str, Any]]:
+    items = get_supabase().table("shopping_items").select("*").execute().data or []
+    prior_map = load_item_prior_map([int(item["item_prior_id"]) for item in items])
+    merged = [merge_item_with_prior(item, prior_map.get(int(item["item_prior_id"]))) for item in items]
+    return sorted(merged, key=lambda row: ((row.get("target_location") or ""), (row.get("name") or "").casefold()))
 
 
-def get_shopping_item(item_id: int) -> sqlite3.Row | None:
-    return get_db().execute(
-        """
-        SELECT
-            shopping_items.*,
-            item_prior.name,
-            item_prior.category,
-            item_prior.typical_quantity,
-            item_prior.typical_unit,
-            item_prior.typical_shelf_life_days,
-            item_prior.default_location,
-            item_prior.picture,
-            item_prior.picture_source,
-            item_prior.source_product_url,
-            item_prior.notes AS prior_notes
-        FROM shopping_items
-        JOIN item_prior ON item_prior.id = shopping_items.item_prior_id
-        WHERE shopping_items.id = ?
-        """,
-        (item_id,),
-    ).fetchone()
+def get_shopping_item(item_id: int) -> dict[str, Any] | None:
+    response = get_supabase().table("shopping_items").select("*").eq("id", item_id).limit(1).execute()
+    if not response.data:
+        return None
+    item = response.data[0]
+    prior = get_item_prior(int(item["item_prior_id"]))
+    return merge_item_with_prior(item, prior)
 
 
 def delete_shopping_item(item_id: int) -> None:
-    get_db().execute("DELETE FROM shopping_items WHERE id = ?", (item_id,))
-    get_db().commit()
+    get_supabase().table("shopping_items").delete().eq("id", item_id).execute()
 
 
 def add_receipt_item_to_kitchen(
@@ -1703,80 +1584,68 @@ def add_receipt_item_to_kitchen(
 
 
 def create_history_item(data: dict[str, Any]) -> int:
-    cursor = get_db().execute(
-        """
-        INSERT INTO items_history (
-            item_prior_id, inventory_item_id, purchased_at, quantity, unit,
-            cost, target_location, notes
+    response = get_supabase().table("items_history").insert(
+        {
+            "item_prior_id": data["item_prior_id"],
+            "inventory_item_id": data.get("inventory_item_id"),
+            "purchased_at": data["purchased_at"],
+            "quantity": data["quantity"],
+            "unit": data["unit"],
+            "cost": data.get("cost"),
+            "target_location": data.get("target_location"),
+            "notes": data.get("notes"),
+        }
+    ).execute()
+    if not response.data:
+        raise RuntimeError("Inserimento storico non riuscito.")
+    return int(response.data[0]["id"])
+
+
+def list_history_items() -> list[dict[str, Any]]:
+    history = get_supabase().table("items_history").select("*").execute().data or []
+    prior_map = load_item_prior_map([int(item["item_prior_id"]) for item in history])
+    merged = []
+    for item in history:
+        prior = prior_map.get(int(item["item_prior_id"])) or {}
+        merged.append(
+            item
+            | {
+                "name": prior.get("name", ""),
+                "category": prior.get("category", ""),
+                "picture": prior.get("picture"),
+            }
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            data["item_prior_id"],
-            data.get("inventory_item_id"),
-            data["purchased_at"],
-            data["quantity"],
-            data["unit"],
-            data.get("cost"),
-            data.get("target_location"),
-            data.get("notes"),
+    return sorted(
+        merged,
+        key=lambda row: (
+            row.get("purchased_at") or "",
+            int(row.get("id") or 0),
         ),
+        reverse=True,
     )
-    get_db().commit()
-    return int(cursor.lastrowid)
-
-
-def list_history_items() -> list[sqlite3.Row]:
-    return get_db().execute(
-        """
-        SELECT
-            items_history.*,
-            item_prior.name,
-            item_prior.category,
-            item_prior.picture
-        FROM items_history
-        JOIN item_prior ON item_prior.id = items_history.item_prior_id
-        ORDER BY items_history.purchased_at DESC, items_history.id DESC
-        """
-    ).fetchall()
 
 
 def load_dashboard_stats() -> dict[str, Any]:
-    db = get_db()
+    supabase = get_supabase()
     today_iso = date.today().isoformat()
     soon_iso = (date.today() + timedelta(days=3)).isoformat()
-    inventory_count = db.execute(
-        "SELECT COUNT(*) FROM inventory_items",
-    ).fetchone()[0]
-    shopping_count = db.execute(
-        "SELECT COUNT(*) FROM shopping_items",
-    ).fetchone()[0]
-    prior_count = db.execute(
-        "SELECT COUNT(*) FROM item_prior",
-    ).fetchone()[0]
-    fridge_count = db.execute(
-        "SELECT COUNT(*) FROM inventory_items WHERE location = 'frigo'",
-    ).fetchone()[0]
-    pantry_count = db.execute(
-        "SELECT COUNT(*) FROM inventory_items WHERE location = 'dispensa'",
-    ).fetchone()[0]
-    expired_count = db.execute(
-        """
-        SELECT COUNT(*)
-        FROM inventory_items
-        WHERE expiry_date IS NOT NULL AND expiry_date < ?
-        """,
-        (today_iso,),
-    ).fetchone()[0]
-    expiring_count = db.execute(
-        """
-        SELECT COUNT(*)
-        FROM inventory_items
-        WHERE expiry_date IS NOT NULL
-          AND expiry_date BETWEEN ? AND ?
-        """,
-        (today_iso, soon_iso),
-    ).fetchone()[0]
+    inventory_rows = supabase.table("inventory_items").select("id,location,expiry_date").execute().data or []
+    shopping_count = len(supabase.table("shopping_items").select("id").execute().data or [])
+    prior_count = len(supabase.table("item_prior").select("id").execute().data or [])
+
+    inventory_count = len(inventory_rows)
+    fridge_count = sum(1 for row in inventory_rows if row.get("location") == "frigo")
+    pantry_count = sum(1 for row in inventory_rows if row.get("location") == "dispensa")
+    expired_count = sum(
+        1
+        for row in inventory_rows
+        if row.get("expiry_date") is not None and str(row["expiry_date"]) < today_iso
+    )
+    expiring_count = sum(
+        1
+        for row in inventory_rows
+        if row.get("expiry_date") is not None and today_iso <= str(row["expiry_date"]) <= soon_iso
+    )
     return {
         "inventory_count": inventory_count,
         "shopping_count": shopping_count,
@@ -1789,27 +1658,20 @@ def load_dashboard_stats() -> dict[str, Any]:
 
 
 def load_history_stats() -> dict[str, Any]:
-    db = get_db()
-    row = db.execute(
-        """
-        SELECT COUNT(*) AS total_purchases,
-               COALESCE(SUM(cost), 0) AS total_cost
-        FROM items_history
-        """
-    ).fetchone()
+    history_items = get_supabase().table("items_history").select("cost").execute().data or []
     return {
-        "total_purchases": row["total_purchases"],
-        "total_cost": row["total_cost"],
+        "total_purchases": len(history_items),
+        "total_cost": sum(float(row.get("cost") or 0) for row in history_items),
     }
 
 
 def load_settings_stats() -> dict[str, Any]:
-    db = get_db()
+    supabase = get_supabase()
     return {
-        "prior_count": db.execute("SELECT COUNT(*) FROM item_prior").fetchone()[0],
-        "inventory_count": db.execute("SELECT COUNT(*) FROM inventory_items").fetchone()[0],
-        "shopping_count": db.execute("SELECT COUNT(*) FROM shopping_items").fetchone()[0],
-        "history_count": db.execute("SELECT COUNT(*) FROM items_history").fetchone()[0],
+        "prior_count": len(supabase.table("item_prior").select("id").execute().data or []),
+        "inventory_count": len(supabase.table("inventory_items").select("id").execute().data or []),
+        "shopping_count": len(supabase.table("shopping_items").select("id").execute().data or []),
+        "history_count": len(supabase.table("items_history").select("id").execute().data or []),
     }
 
 

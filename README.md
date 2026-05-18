@@ -23,14 +23,18 @@ Webapp Flask per gestire i prodotti disponibili in frigo e dispensa, con scadenz
 
 ## Database
 
-Il database SQLite viene creato automaticamente in `instance/kitchen.sqlite`.
+L'app usa Supabase e richiede una inizializzazione schema una tantum.
+
+Tabelle richieste:
 
 - `item_prior`: anagrafica stabile dei prodotti. La colonna `picture` contiene il link all'immagine del prodotto, `default_location` contiene la destinazione predefinita.
 - `inventory_items`: scorte reali presenti in casa, collegate a `item_prior` tramite `item_prior_id`.
 - `shopping_items`: prodotti da comprare, collegati a `item_prior` tramite `item_prior_id`.
 - `items_history`: acquisti registrati quando una voce della lista spesa viene indicata come acquistata.
 
-Se esiste un database creato con la versione precedente, l'app migra automaticamente `inventory_items` e `shopping_items` al nuovo modello.
+In Supabase SQL Editor esegui lo script `scripts/supabase_schema.sql`.
+
+Nota: lo script crea anche policy RLS permissive per `anon` e `authenticated` per ambiente locale/dev.
 
 ## Immagini
 
@@ -65,6 +69,13 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 python app.py
+```
+
+Prima del primo avvio assicurati di avere in `.env`:
+
+```bash
+SUPABASE_URL=...
+SUPABASE_KEY=...
 ```
 
 Apri `http://127.0.0.1:5000`.

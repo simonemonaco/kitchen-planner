@@ -8,7 +8,7 @@
       <p class="eyebrow">Impostazioni</p>
       <h2>Prodotti prior</h2>
     </div>
-    <a class="button secondary" href="{{ url_for('settings') }}">Impostazioni</a>
+    <a class="button secondary" href="{{ url_for('settings') }}"><i class="fa-solid fa-gear" aria-hidden="true"></i> Impostazioni</a>
   </section>
 
   <form class="search-form" method="get">
@@ -16,7 +16,7 @@
       Cerca
       <input name="q" value="{{ query }}" autocomplete="off" placeholder="Nome o categoria">
     </label>
-    <button class="button" type="submit">Cerca</button>
+    <button class="button" type="submit"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i> Cerca</button>
   </form>
 
   <section class="list-panel">
@@ -59,7 +59,7 @@
               {% endif %}
             </div>
             <div class="row-actions">
-              <a class="small-button secondary" href="{{ url_for('edit_prior', prior_id=item.id) }}">Modifica</a>
+              <a class="small-button secondary" href="{{ url_for('edit_prior', prior_id=item.id) }}"><i class="fa-solid fa-pen" aria-hidden="true"></i> Modifica</a>
             </div>
           </article>
         {% endfor %}

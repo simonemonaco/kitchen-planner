@@ -26,7 +26,7 @@
     <div class="item-list">
       {% for row in rows %}
         <article class="receipt-card" data-receipt-card>
-          <button class="remove-card" type="button" aria-label="Non aggiungere questo prodotto" data-remove-card>X</button>
+          <button class="remove-card" type="button" aria-label="Non aggiungere questo prodotto" data-remove-card><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
           <input type="hidden" name="include_row_ids" value="{{ row.id }}" data-include-row>
           <input type="hidden" name="prior_id_{{ row.id }}" data-receipt-prior-id>
           <div class="item-main">
@@ -41,7 +41,11 @@
             <div class="field-grid">
               <label>
                 Quantita'
-                <input name="quantity_{{ row.id }}" type="number" min="0.01" step="0.01" value="1" required data-receipt-quantity>
+                <div class="qty-control" data-qty-control data-qty-unit-selector="[name='unit_{{ row.id }}']">
+                  <button type="button" class="small-button secondary icon-only" data-qty-action="decrease" aria-label="Diminuisci quantita'"><i class="fa-solid fa-minus" aria-hidden="true"></i></button>
+                  <input name="quantity_{{ row.id }}" type="number" min="0.01" step="0.01" value="1" required data-receipt-quantity data-qty-input>
+                  <button type="button" class="small-button secondary icon-only" data-qty-action="increase" aria-label="Aumenta quantita'"><i class="fa-solid fa-plus" aria-hidden="true"></i></button>
+                </div>
               </label>
               <label>
                 Unita'
@@ -62,7 +66,7 @@
     </div>
 
     <div class="form-actions receipt-actions">
-      <button class="button" type="submit">Aggiungi alla cucina</button>
+      <button class="button" type="submit"><i class="fa-solid fa-kitchen-set" aria-hidden="true"></i> Aggiungi alla cucina</button>
     </div>
   </form>
 {% endblock %}

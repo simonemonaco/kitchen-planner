@@ -70,7 +70,9 @@ nav,
 .form-actions,
 .row-actions,
 .badges,
-.filters {
+.filters,
+.quantity-adjust,
+.view-switch {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -80,7 +82,8 @@ nav,
 nav a,
 .button,
 .small-button,
-.filters a {
+.filters a,
+.view-switch a {
   border: 1px solid transparent;
   border-radius: 8px;
   text-decoration: none;
@@ -90,14 +93,24 @@ nav a,
 }
 
 nav a,
-.filters a {
+.filters a,
+.view-switch a {
   padding: 10px 12px;
 }
 
 nav a:hover,
 .filters a:hover,
-.filters .active {
+.filters .active,
+.view-switch a:hover,
+.view-switch .active {
   background: var(--surface-strong);
+}
+
+nav a i,
+.button i,
+.small-button i,
+.view-switch a i {
+  margin-right: 6px;
 }
 
 .primary-link,
@@ -135,6 +148,18 @@ nav a:hover,
   padding: 9px 12px;
   border: 0;
   font-size: 0.85rem;
+}
+
+.small-button.icon-only {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+}
+
+.small-button.icon-only i {
+  margin-right: 0;
 }
 
 .small-button.danger {
@@ -247,9 +272,14 @@ button {
   margin: 0 0 14px;
 }
 
-.filters a {
+.filters a,
+.view-switch a {
   border-color: var(--line);
   background: var(--surface);
+}
+
+.view-switch {
+  margin: -6px 0 14px;
 }
 
 .list-panel {
@@ -266,7 +296,8 @@ button {
 .history-row,
 .prior-row,
 .receipt-row,
-.receipt-card {
+.receipt-card,
+.pantry-card {
   display: grid;
   gap: 16px;
   padding: 16px;
@@ -302,6 +333,23 @@ button {
   position: relative;
   grid-template-columns: minmax(0, 1fr) minmax(280px, 480px);
   align-items: start;
+}
+
+.pantry-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 12px;
+}
+
+.pantry-card {
+  grid-template-columns: 1fr;
+  align-content: start;
+}
+
+.pantry-card .product-media {
+  margin: 0 auto;
+  width: 55%;
+  height: auto;
 }
 
 .receipt-fields,
@@ -382,6 +430,32 @@ button {
 .notes {
   margin-top: 8px !important;
   color: var(--ink) !important;
+}
+
+.quantity-adjust {
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.quantity-pill {
+  min-width: 110px;
+  text-align: center;
+  font-weight: 800;
+  border-radius: 999px;
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  background: var(--surface-strong);
+}
+
+.qty-control {
+  display: grid;
+  grid-template-columns: auto minmax(74px, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.qty-control input[type="number"] {
+  text-align: center;
 }
 
 .badge {
@@ -590,7 +664,8 @@ textarea:focus {
   .prior-row,
   .receipt-row,
   .receipt-card,
-  .two-column {
+  .two-column,
+  .pantry-card {
     grid-template-columns: 1fr;
   }
 
@@ -620,6 +695,15 @@ textarea:focus {
   .stats-grid,
   .field-grid {
     grid-template-columns: 1fr;
+  }
+
+  .view-switch {
+    width: 100%;
+  }
+
+  .view-switch a {
+    flex: 1;
+    text-align: center;
   }
 
   .form-panel,

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title>Kitchen Planner</title>
+  <rect width="64" height="64" rx="14" fill="#1f6f55"/>
+  <path d="M14 22h36v8H14zM18 30h28v18a4 4 0 0 1-4 4H22a4 4 0 0 1-4-4z" fill="#f6f7f4"/>
+  <circle cx="24" cy="40" r="3" fill="#1f6f55"/>
+  <circle cx="32" cy="40" r="3" fill="#1f6f55"/>
+  <circle cx="40" cy="40" r="3" fill="#1f6f55"/>
+</svg>

@@ -4,8 +4,11 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}Kitchen Planner{% endblock %}</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer">
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
     <script src="{{ url_for('static', filename='prior_picker.js') }}" defer></script>
+    <script src="{{ url_for('static', filename='quantity_controls.js') }}" defer></script>
     <script src="{{ url_for('static', filename='receipt.js') }}" defer></script>
   </head>
   <body>
@@ -15,11 +18,11 @@
         <h1>Kitchen Planner</h1>
       </div>
       <nav aria-label="Navigazione principale">
-        <a href="{{ url_for('index') }}">Inventario</a>
-        <a href="{{ url_for('shopping') }}">Lista spesa</a>
-        <a href="{{ url_for('history') }}">Storico</a>
-        <a class="primary-link" href="{{ url_for('add_inventory_item') }}">Nuovo prodotto</a>
-        <a class="settings-link" href="{{ url_for('settings') }}" aria-label="Impostazioni">Impostazioni</a>
+        <a href="{{ url_for('index') }}"><i class="fa-solid fa-boxes-stacked" aria-hidden="true"></i> Inventario</a>
+        <a href="{{ url_for('shopping') }}"><i class="fa-solid fa-cart-shopping" aria-hidden="true"></i> Lista spesa</a>
+        <a href="{{ url_for('history') }}"><i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i> Storico</a>
+        <a class="primary-link" href="{{ url_for('add_inventory_item') }}"><i class="fa-solid fa-plus" aria-hidden="true"></i> Nuovo prodotto</a>
+        <a class="settings-link" href="{{ url_for('settings') }}" aria-label="Impostazioni"><i class="fa-solid fa-gear" aria-hidden="true"></i> Impostazioni</a>
       </nav>
     </header>
 
