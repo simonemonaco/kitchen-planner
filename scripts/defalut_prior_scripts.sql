@@ -5,9 +5,7 @@ INSERT INTO public.item_prior (
     typical_unit,
     typical_shelf_life_days,
     default_location,
-    picture,
-    picture_source,
-    source_product_url
+    picture
 ) VALUES
 ('Mozzarella', 'Formaggi', 125, 'g', 10, 'frigo',
  'https://commons.wikimedia.org/wiki/Special:FilePath/Mozzarella%20di%20bufala3.jpg',
@@ -15,9 +13,7 @@ INSERT INTO public.item_prior (
  'https://www.wikidata.org/wiki/Q14088'),
 
 ('Pasta', 'Pasta', 500, 'g', 365, 'dispensa',
- 'https://commons.wikimedia.org/wiki/Special:FilePath/Pasta%20IMG%203985.JPG',
- 'Wikidata / Wikimedia Commons',
- 'https://www.wikidata.org/wiki/Q178'),
+ 'https://commons.wikimedia.org/wiki/Special:FilePath/Pasta%20IMG%203985.JPG'),
 
 ('Riso', 'Cereali', 1, 'kg', 365, 'dispensa',
  'https://commons.wikimedia.org/wiki/Special:FilePath/White%2C%20Brown%2C%20Red%20%26%20Wild%20rice.jpg',

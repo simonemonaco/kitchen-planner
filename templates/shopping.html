@@ -55,7 +55,11 @@
         </label>
         <label>
           Unita'
-          <input name="unit" value="pz" required data-prior-field="unit">
+          <select name="unit" required data-prior-field="unit">
+            {% for u in units %}
+              <option value="{{ u }}">{{ u }}</option>
+            {% endfor %}
+          </select>
         </label>
       </div>
 
@@ -71,43 +75,45 @@
     <section class="list-panel">
       {% if items %}
         <div class="item-list">
+          {% set ns = namespace(current_category=None) %}
           {% for item in items %}
+            {% if item.category != ns.current_category %}
+              <p class="list-category-header">{{ item.category or "Altro" }}</p>
+              {% set ns.current_category = item.category %}
+            {% endif %}
             <article class="shopping-row">
-              <div class="product-media">
-                {% if item.picture %}
-                  <img src="{{ item.picture }}" alt="{{ item.name }}">
-                {% else %}
-                  <span>{{ item.name[:1] }}</span>
-                {% endif %}
-              </div>
-              <label class="shopping-check" data-shopping-select-wrap>
-                <input type="checkbox" value="{{ item.id }}" data-shopping-select>
-                <span class="sr-only">Seleziona {{ item.name }}</span>
-              </label>
-              <div class="item-main">
-                <h3>{{ item.name }}</h3>
-                <p class="shopping-qty-line">{{ item.quantity|qty }} {{ item.unit }}</p>
-              </div>
-
-              <details class="shopping-details">
-                <summary class="small-button secondary"><i class="fa-solid fa-chevron-down" aria-hidden="true"></i> Dettagli</summary>
-                <div class="shopping-details-content">
-                  <p>{{ locations[item.target_location] }}</p>
-                  {% if item.category %}
-                    <p>{{ item.category }}</p>
+              <div class="shopping-row-main">
+                <div class="product-media">
+                  {% if item.picture %}
+                    <img src="{{ item.picture }}" alt="{{ item.name }}">
+                  {% else %}
+                    <span>{{ item.name[:1] }}</span>
                   {% endif %}
-                  {% if item.typical_shelf_life_days %}
-                    <p>{{ item.typical_shelf_life_days }} giorni tipici</p>
-                  {% endif %}
-                  {% if item.notes %}
-                    <p class="notes">{{ item.notes }}</p>
-                  {% endif %}
-
-                  <form action="{{ url_for('delete_shopping', item_id=item.id) }}" method="post">
-                    <button class="small-button danger" type="submit"><i class="fa-solid fa-trash" aria-hidden="true"></i> Rimuovi</button>
-                  </form>
                 </div>
-              </details>
+                <div class="item-main" aria-label="{{ item.name }}">
+                  <h3>{{ item.name }}</h3>
+                  <div class="quantity-adjust vertical" data-async-qty aria-label="Regola quantita' {{ item.name }}">
+                    <form action="{{ url_for('adjust_shopping_quantity', item_id=item.id) }}" method="post" data-qty-form>
+                      <input type="hidden" name="direction" value="dec">
+                      <button class="small-button secondary icon-only" type="submit" aria-label="Diminuisci quantita'"><i class="fa-solid fa-minus" aria-hidden="true"></i></button>
+                    </form>
+                    <span class="shopping-qty-line" data-qty-pill>{{ item.quantity|qty }} {{ item.unit }}</span>
+                    <form action="{{ url_for('adjust_shopping_quantity', item_id=item.id) }}" method="post" data-qty-form>
+                      <input type="hidden" name="direction" value="inc">
+                      <button class="small-button secondary icon-only" type="submit" aria-label="Aumenta quantita'"><i class="fa-solid fa-plus" aria-hidden="true"></i></button>
+                    </form>
+                  </div>
+                </div>
+              </div>
+              <div class="shopping-row-actions">
+                <label class="shopping-check" data-shopping-select-wrap>
+                  <input type="checkbox" value="{{ item.id }}" data-shopping-select>
+                  <span class="sr-only">Seleziona {{ item.name }}</span>
+                </label>
+                <form action="{{ url_for('delete_shopping', item_id=item.id) }}" method="post">
+                  <button class="small-button danger" type="submit"><i class="fa-solid fa-trash" aria-hidden="true"></i> Rimuovi</button>
+                </form>
+              </div>
             </article>
           {% endfor %}
         </div>
@@ -131,5 +137,6 @@
 {% endblock %}
 
 {% block page_scripts %}
+  <script src="{{ url_for('static', filename='async_qty.js') }}" defer></script>
   <script src="{{ url_for('static', filename='shopping.js') }}" defer></script>
 {% endblock %}

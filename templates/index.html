@@ -9,7 +9,6 @@
       <h2>Prodotti disponibili</h2>
     </div>
     <div class="actions">
-      <a class="button secondary" href="{{ url_for('shopping') }}"><i class="fa-solid fa-cart-shopping" aria-hidden="true"></i> Lista spesa</a>
       <a class="button secondary" href="{{ url_for('receipt_upload') }}"><i class="fa-solid fa-receipt" aria-hidden="true"></i> Aggiungi scontrino</a>
       <a class="button" href="{{ url_for('add_inventory_item') }}"><i class="fa-solid fa-plus" aria-hidden="true"></i> Aggiungi prodotto</a>
     </div>
@@ -20,6 +19,7 @@
       <span>{{ stats.inventory_count }}</span>
       <p>Prodotti totali</p>
     </article>
+    {#
     <article class="stat">
       <span>{{ stats.fridge_count }}</span>
       <p>In frigo</p>
@@ -28,6 +28,7 @@
       <span>{{ stats.pantry_count }}</span>
       <p>In dispensa</p>
     </article>
+    #}
     <article class="stat warning">
       <span>{{ stats.expiring_count }}</span>
       <p>In scadenza</p>
@@ -36,10 +37,12 @@
       <span>{{ stats.expired_count }}</span>
       <p>Scaduti</p>
     </article>
+    {#
     <article class="stat">
       <span>{{ stats.shopping_count }}</span>
       <p>Da comprare</p>
     </article>
+    #}
   </section>
 
   <section class="filters" aria-label="Filtri inventario">
@@ -49,17 +52,40 @@
     {% endfor %}
   </section>
 
-  <section class="view-switch" aria-label="Modalita' visualizzazione inventario">
-    <a class="{% if view_mode == 'grid' %}active{% endif %}" href="{{ url_for('index', location=selected_location, view='grid') }}"><i class="fa-solid fa-table-cells-large" aria-hidden="true"></i></a>
-    <a class="{% if view_mode == 'list' %}active{% endif %}" href="{{ url_for('index', location=selected_location, view='list') }}"><i class="fa-solid fa-list" aria-hidden="true"></i></a>
-  </section>
+  <div class="inventory-controls">
+    <input type="search" class="inventory-search" data-inventory-search placeholder="Cerca prodotto o categoria..." aria-label="Cerca nell'inventario">
+    <section class="view-switch" aria-label="Modalita' visualizzazione inventario">
+      <a class="{% if view_mode == 'grid' %}active{% endif %}" href="{{ url_for('index', location=selected_location, view='grid') }}"><i class="fa-solid fa-table-cells-large" aria-hidden="true"></i></a>
+      <a class="{% if view_mode == 'list' %}active{% endif %}" href="{{ url_for('index', location=selected_location, view='list') }}"><i class="fa-solid fa-list" aria-hidden="true"></i></a>
+      <span aria-hidden="true" class="sort-sep">|</span>
+      <label class="sort-select-wrap" aria-label="Ordina per">
+        <i class="fa-solid fa-arrow-up-wide-short" aria-hidden="true"></i>
+        <select data-inventory-sort-select>
+          <option value="expiry">Scadenza</option>
+          <option value="created">Inserimento</option>
+          <option value="name">Nome</option>
+        </select>
+        <div class="custom-select" data-custom-select>
+          <button type="button" class="custom-select-trigger" aria-haspopup="listbox" aria-expanded="false">
+            <span class="custom-select-value">Scadenza</span>
+            <i class="fa-solid fa-caret-down" aria-hidden="true"></i>
+          </button>
+          <ul class="custom-select-list" role="listbox" tabindex="-1" hidden></ul>
+        </div>
+      </label>
+    </section>
+  </div>
 
   <section class="list-panel">
     {% if items %}
       {% if view_mode == "grid" %}
-        <div class="pantry-grid">
+        <div class="pantry-grid" data-inventory-container>
           {% for item in items %}
-            <article class="pantry-card">
+            <article class="pantry-card"
+                     data-name="{{ item.name|lower }}"
+                     data-category="{{ (item.category or '')|lower }}"
+                     data-expiry="{{ item.expiry_date or '' }}"
+                     data-created="{{ item.created_at or '' }}">
               <div class="product-media">
                 {% if item.picture %}
                   <img src="{{ item.picture }}" alt="{{ item.name }}">
@@ -76,13 +102,13 @@
                     {{ item.category }}
                   {% endif %}
                 </p>
-                <div class="quantity-adjust" aria-label="Regola quantita' {{ item.name }}">
-                  <form action="{{ url_for('adjust_inventory_quantity', item_id=item.id, location=selected_location, view=view_mode) }}" method="post">
+                <div class="quantity-adjust" data-async-qty aria-label="Regola quantita' {{ item.name }}">
+                  <form action="{{ url_for('adjust_inventory_quantity', item_id=item.id, location=selected_location, view=view_mode) }}" method="post" data-qty-form>
                     <input type="hidden" name="direction" value="dec">
                     <button class="small-button secondary icon-only" type="submit" aria-label="Diminuisci quantita'"><i class="fa-solid fa-minus" aria-hidden="true"></i></button>
                   </form>
-                  <span class="quantity-pill">{{ item.quantity|qty }} {{ item.unit }}</span>
-                  <form action="{{ url_for('adjust_inventory_quantity', item_id=item.id, location=selected_location, view=view_mode) }}" method="post">
+                  <span class="quantity-pill" data-qty-pill>{{ item.quantity|qty }} {{ item.unit }}</span>
+                  <form action="{{ url_for('adjust_inventory_quantity', item_id=item.id, location=selected_location, view=view_mode) }}" method="post" data-qty-form>
                     <input type="hidden" name="direction" value="inc">
                     <button class="small-button secondary icon-only" type="submit" aria-label="Aumenta quantita'"><i class="fa-solid fa-plus" aria-hidden="true"></i></button>
                   </form>
@@ -112,9 +138,13 @@
           {% endfor %}
         </div>
       {% else %}
-        <div class="item-list">
+        <div class="item-list" data-inventory-container>
           {% for item in items %}
-            <article class="item-row">
+            <article class="item-row"
+                     data-name="{{ item.name|lower }}"
+                     data-category="{{ (item.category or '')|lower }}"
+                     data-expiry="{{ item.expiry_date or '' }}"
+                     data-created="{{ item.created_at or '' }}">
               <div class="product-media">
                 {% if item.picture %}
                   <img src="{{ item.picture }}" alt="{{ item.name }}">
@@ -133,13 +163,13 @@
                     {% endif %}
                   </p>
                 </div>
-                <div class="quantity-adjust" aria-label="Regola quantita' {{ item.name }}">
-                  <form action="{{ url_for('adjust_inventory_quantity', item_id=item.id, location=selected_location, view=view_mode) }}" method="post">
+                <div class="quantity-adjust" data-async-qty aria-label="Regola quantita' {{ item.name }}">
+                  <form action="{{ url_for('adjust_inventory_quantity', item_id=item.id, location=selected_location, view=view_mode) }}" method="post" data-qty-form>
                     <input type="hidden" name="direction" value="dec">
                     <button class="small-button secondary icon-only" type="submit" aria-label="Diminuisci quantita'"><i class="fa-solid fa-minus" aria-hidden="true"></i></button>
                   </form>
-                  <span class="quantity-pill">{{ item.quantity|qty }} {{ item.unit }}</span>
-                  <form action="{{ url_for('adjust_inventory_quantity', item_id=item.id, location=selected_location, view=view_mode) }}" method="post">
+                  <span class="quantity-pill" data-qty-pill>{{ item.quantity|qty }} {{ item.unit }}</span>
+                  <form action="{{ url_for('adjust_inventory_quantity', item_id=item.id, location=selected_location, view=view_mode) }}" method="post" data-qty-form>
                     <input type="hidden" name="direction" value="inc">
                     <button class="small-button secondary icon-only" type="submit" aria-label="Aumenta quantita'"><i class="fa-solid fa-plus" aria-hidden="true"></i></button>
                   </form>
@@ -186,4 +216,9 @@
       </div>
     {% endif %}
   </section>
+{% endblock %}
+
+{% block page_scripts %}
+  <script src="{{ url_for('static', filename='async_qty.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='inventory.js') }}" defer></script>
 {% endblock %}

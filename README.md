@@ -90,6 +90,11 @@ SEED_DEFAULT_PRIORS=true
 
 # Esegue controlli schema+seed all'avvio app
 RUN_STARTUP_TASKS=true
+
+# Arricchimento automatico prior via LLM (Gemini)
+# Se non impostato il fallback è silenzioso
+GEMINI_API_KEY=AIza...
+GEMINI_MODEL=gemini-2.5-flash  # opzionale, default gemini-2.5-flash
 ```
 
 Apri `http://127.0.0.1:5000`.

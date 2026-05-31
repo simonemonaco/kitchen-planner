@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+
+{% block title %}Anteprima arricchimento LLM - Kitchen Planner{% endblock %}
+
+{% block content %}
+  <section class="form-shell">
+    <div class="form-heading">
+      <p class="eyebrow">Prodotti prior</p>
+      <h2>Anteprima arricchimento LLM</h2>
+    </div>
+
+    <div class="preview-panel">
+      <h3>{{ prior.name }}</h3>
+      <table>
+        <tr>
+          <th>Campo</th>
+          <th>Valore corrente</th>
+          <th>Proposta LLM</th>
+        </tr>
+        <tr>
+          <td>Categoria</td>
+          <td>{{ prior.category or '-' }}</td>
+          <td>{{ suggested.category or 'Nessuna proposta' }}</td>
+        </tr>
+        <tr>
+          <td>Quantita' tipica</td>
+          <td>{{ prior.typical_quantity or '-' }}</td>
+          <td>{{ suggested.typical_quantity or 'Nessuna proposta' }}</td>
+        </tr>
+        <tr>
+          <td>Unita' tipica</td>
+          <td>{{ prior.typical_unit or '-' }}</td>
+          <td>{{ suggested.typical_unit or 'Nessuna proposta' }}</td>
+        </tr>
+        <tr>
+          <td>Scadenza tipica (giorni)</td>
+          <td>{{ prior.typical_shelf_life_days or '-' }}</td>
+          <td>{{ suggested.typical_shelf_life_days or 'Nessuna proposta' }}</td>
+        </tr>
+        <tr>
+          <td>Destinazione predefinita</td>
+          <td>{{ prior.default_location or '-' }}</td>
+          <td>{{ (locations[suggested.default_location] if suggested.default_location and suggested.default_location in locations else suggested.default_location) or 'Nessuna proposta' }}</td>
+        </tr>
+          <tr>
+            <td>Immagine proposta</td>
+            <td>{% if prior.picture %}<a href="{{ prior.picture }}" target="_blank"><img src="{{ prior.picture }}" alt="{{ prior.name }}" style="height:48px"></a>{% else %}-{% endif %}</td>
+            <td>{% if suggested.picture %}<a href="{{ suggested.picture }}" target="_blank"><img src="{{ suggested.picture }}" alt="{{ prior.name }}" style="height:48px"></a>{% else %}Nessuna proposta{% endif %}</td>
+          </tr>
+      </table>
+
+      {% if raw_llm %}
+      <div class="llm-raw">
+        <h4>Output grezzo LLM</h4>
+        <pre style="white-space:pre-wrap;">{{ raw_llm }}</pre>
+        <p class="muted">Il risultato non è stato interpretato come JSON valido; puoi copiare qui il testo per analisi o ripetere la chiamata.</p>
+      </div>
+      {% endif %}
+
+      <form method="post" action="{{ url_for('enrich_prior_accept', prior_id=prior.id) }}">
+          <input type="hidden" name="category" value="{{ suggested.category or '' }}">
+          <input type="hidden" name="typical_quantity" value="{{ suggested.typical_quantity or '' }}">
+          <input type="hidden" name="typical_unit" value="{{ suggested.typical_unit or '' }}">
+          <input type="hidden" name="typical_shelf_life_days" value="{{ suggested.typical_shelf_life_days or '' }}">
+          <input type="hidden" name="default_location" value="{{ suggested.default_location or '' }}">
+          <input type="hidden" name="picture" value="{{ suggested.picture or '' }}">
+        <div class="form-actions">
+          <a class="button secondary" href="{{ url_for('edit_prior', prior_id=prior.id) }}">Annulla</a>
+          <button class="button" type="submit">Accetta e applica</button>
+        </div>
+      </form>
+    </div>
+  </section>
+{% endblock %}

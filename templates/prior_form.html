@@ -20,10 +20,6 @@
           Categoria
           <input name="category" value="{{ item.category or 'Altro' }}" list="category-options" required autocomplete="off">
         </label>
-        <label>
-          Fonte immagine
-          <input name="picture_source" value="{{ item.picture_source or '' }}" autocomplete="off">
-        </label>
       </div>
       <datalist id="category-options">
         {% for category in categories %}
@@ -42,7 +38,11 @@
         </label>
         <label>
           Unita' tipica
-          <input name="typical_unit" value="{{ item.typical_unit or 'pz' }}">
+          <select name="typical_unit" data-prior-field="typical_unit">
+            {% for u in units %}
+              <option value="{{ u }}" {% if (item.typical_unit or 'pz') == u %}selected{% endif %}>{{ u }}</option>
+            {% endfor %}
+          </select>
         </label>
       </div>
 
@@ -64,11 +64,7 @@
         Link immagine
         <input name="picture" type="url" value="{{ item.picture or '' }}" placeholder="https://...">
       </label>
-
-      <label>
-        Link prodotto sorgente
-        <input name="source_product_url" type="url" value="{{ item.source_product_url or '' }}" placeholder="https://...">
-      </label>
+      
 
       <label>
         Note
@@ -77,6 +73,9 @@
 
       <div class="form-actions">
         <a class="button secondary" href="{{ url_for('priors') }}"><i class="fa-solid fa-xmark" aria-hidden="true"></i> Annulla</a>
+        {% if item.id %}
+          <a class="button secondary" href="{{ url_for('enrich_prior_preview', prior_id=item.id) }}"><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i> Arricchisci con LLM</a>
+        {% endif %}
         <button class="button" type="submit"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i> Salva modifiche</button>
       </div>
     </form>

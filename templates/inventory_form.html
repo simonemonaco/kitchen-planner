@@ -44,7 +44,11 @@
         </label>
         <label>
           Unita'
-          <input name="unit" value="{{ item.unit or 'pz' }}" required data-prior-field="unit">
+          <select name="unit" required data-prior-field="unit">
+            {% for u in units %}
+              <option value="{{ u }}" {% if (item.unit or 'pz') == u %}selected{% endif %}>{{ u }}</option>
+            {% endfor %}
+          </select>
         </label>
       </div>
 
@@ -61,6 +65,10 @@
         Scadenza
         <input name="expiry_date" type="date" value="{{ item.expiry_date or '' }}" data-prior-expiry>
       </label>
+
+      {% if mode == "edit" and purchased_at %}
+        <p class="field-help">Acquistato il {{ purchased_at|datetime_it }}</p>
+      {% endif %}
 
       <div class="form-actions">
         <a class="button secondary" href="{{ url_for('index') }}"><i class="fa-solid fa-xmark" aria-hidden="true"></i> Annulla</a>

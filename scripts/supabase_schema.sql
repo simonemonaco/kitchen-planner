@@ -9,8 +9,7 @@ create table if not exists public.item_prior (
     typical_shelf_life_days integer,
     default_location text not null default 'dispensa' check (default_location in ('frigo', 'dispensa')),
     picture text,
-    picture_source text,
-    source_product_url text,
+    
     notes text,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now()

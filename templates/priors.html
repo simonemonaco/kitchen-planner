@@ -11,19 +11,22 @@
     <a class="button secondary" href="{{ url_for('settings') }}"><i class="fa-solid fa-gear" aria-hidden="true"></i> Impostazioni</a>
   </section>
 
-  <form class="search-form" method="get">
-    <label>
-      Cerca
-      <input name="q" value="{{ query }}" autocomplete="off" placeholder="Nome o categoria">
-    </label>
-    <button class="button" type="submit"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i> Cerca</button>
-  </form>
+  <div class="priors-controls">
+    <input type="search" class="inventory-search" data-prior-filter placeholder="Cerca per nome o categoria..." value="{{ query }}" autocomplete="off" aria-label="Cerca prodotti prior">
+    <div class="view-switch">
+      <button class="view-switch-sort" data-prior-sort="name">Nome</button>
+      <button class="view-switch-sort" data-prior-sort="inserted">Inserimento</button>
+    </div>
+  </div>
 
   <section class="list-panel">
     {% if items %}
       <div class="item-list">
         {% for item in items %}
-          <article class="prior-row">
+          <article class="prior-row"
+                   data-name="{{ item.name|lower }}"
+                   data-category="{{ (item.category or '')|lower }}"
+                   data-created="{{ item.created_at or '' }}">
             <div class="product-media">
               {% if item.picture %}
                 <img src="{{ item.picture }}" alt="{{ item.name }}">
@@ -50,9 +53,7 @@
                 <span class="badge muted">Inventario {{ item.inventory_count }}</span>
                 <span class="badge muted">Spesa {{ item.shopping_count }}</span>
                 <span class="badge muted">Storico {{ item.history_count }}</span>
-                {% if item.picture_source %}
-                  <span class="badge">{{ item.picture_source }}</span>
-                {% endif %}
+                
               </div>
               {% if item.notes %}
                 <p class="notes">{{ item.notes }}</p>
@@ -71,4 +72,51 @@
       </div>
     {% endif %}
   </section>
+{% endblock %}
+
+{% block page_scripts %}
+<script>
+(() => {
+  const SORT_KEY = 'kitchen-planner.priors.sort';
+  const filterInput = document.querySelector('[data-prior-filter]');
+  const sortButtons = Array.from(document.querySelectorAll('[data-prior-sort]'));
+  const list = document.querySelector('.prior-row')?.parentElement;
+
+  if (!list) return;
+
+  function rows() { return Array.from(list.querySelectorAll('.prior-row')); }
+
+  function applyFilter(q) {
+    const needle = q.trim().toLowerCase();
+    rows().forEach(row => {
+      const name = (row.dataset.name || '');
+      const cat  = (row.dataset.category || '');
+      row.hidden = needle !== '' && !name.includes(needle) && !cat.includes(needle);
+    });
+  }
+
+  function applySort(by) {
+    window.localStorage.setItem(SORT_KEY, by);
+    sortButtons.forEach(btn => btn.classList.toggle('active', btn.dataset.priorSort === by));
+    const items = rows();
+    items.sort((a, b) => {
+      if (by === 'inserted') {
+        return (a.dataset.created || '').localeCompare(b.dataset.created || '');
+      }
+      return (a.dataset.name || '').localeCompare(b.dataset.name || '');
+    });
+    items.forEach(item => list.appendChild(item));
+  }
+
+  if (filterInput) {
+    filterInput.addEventListener('input', () => applyFilter(filterInput.value));
+    // Filter with initial server-side query value
+    if (filterInput.value) applyFilter(filterInput.value);
+  }
+
+  sortButtons.forEach(btn => btn.addEventListener('click', () => applySort(btn.dataset.priorSort)));
+
+  applySort(window.localStorage.getItem(SORT_KEY) || 'name');
+})();
+</script>
 {% endblock %}

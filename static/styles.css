@@ -20,6 +20,10 @@
   box-sizing: border-box;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -333,12 +337,21 @@ button {
   justify-self: auto;
   z-index: 5;
 }
-
 .shopping-check input {
   width: 28px;
   height: 28px;
   cursor: pointer;
   accent-color: var(--brand);
+}
+
+/* default: checkbox hidden and positioned statically inside row */
+.shopping-layout:not(.is-shopping-mode) .shopping-row .shopping-check {
+  position: static;
+  top: auto;
+  right: auto;
+  align-self: center;
+  justify-self: auto;
+  display: none;
 }
 
 .shopping-layout.is-shopping-mode {
@@ -349,8 +362,13 @@ button {
   display: none;
 }
 
-.shopping-layout.is-shopping-mode .shopping-check {
+/* when in shopping (spesa) mode, show checkbox at top-right of the row */
+.shopping-layout.is-shopping-mode .shopping-row .shopping-check {
   display: block;
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 5;
 }
 
 .history-row {
@@ -482,6 +500,33 @@ button {
 .quantity-adjust {
   gap: 8px;
   margin-top: 8px;
+}
+
+/* Layout: image on the left, name above quantity on the right */
+.shopping-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  position: relative;
+}
+.shopping-row-main {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  gap: 12px;
+  align-items: center;
+}
+.shopping-row .item-main {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.shopping-row .quantity-adjust {
+  margin-top: 6px;
+}
+.shopping-row-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
 }
 
 .quantity-pill {
@@ -755,6 +800,7 @@ textarea:focus {
   background: var(--surface);
   border: 2px solid var(--line);
   border-radius: 999px;
+  overflow: hidden;
   cursor: pointer;
   user-select: none;
   transition: border-color 150ms ease;
@@ -782,12 +828,16 @@ textarea:focus {
   pointer-events: none;
   font-size: 0.8rem;
   font-weight: 750;
-  padding: 0;
+  padding: 0 6px;
   z-index: 2;
 }
 
 .shopping-mode-label {
   flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
   text-align: center;
   color: var(--muted);
   transition: color 150ms ease;
@@ -813,10 +863,11 @@ textarea:focus {
   position: absolute;
   top: 3px;
   left: 3px;
-  width: calc(50% - 3px);
+  width: calc(50% - 6px);
   height: calc(100% - 6px);
   background: var(--brand);
   border-radius: 999px;
+  /* box-shadow: inset 0 0 0 3px #ffffff; */
   transition: left 200ms cubic-bezier(0.4, 0, 0.2, 1);
   z-index: 1;
 }
@@ -886,7 +937,30 @@ textarea:focus {
     padding: 0 8px;
   }
 
-  .stats-grid,
+  .stats-grid {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+  }
+
+  .stat {
+    min-height: unset;
+    padding: 8px 4px;
+    text-align: center;
+  }
+
+  .stat span {
+    font-size: 1.1rem;
+  }
+
+  .stat p {
+    margin: 3px 0 0;
+    font-size: 0.65rem;
+  }
+
+  .pantry-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
   .field-grid {
     grid-template-columns: 1fr;
   }
@@ -933,4 +1007,149 @@ textarea:focus {
   .shopping-layout.is-shopping-mode .shopping-complete-bar .button {
     width: 100%;
   }
+}
+
+.list-category-header {
+  margin: 16px 0 4px;
+  padding: 0 4px;
+  color: var(--brand);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.list-category-header:first-child {
+  margin-top: 4px;
+}
+
+/* ── Inventory & priors controls (search + sort) ──────────────────────────── */
+
+.inventory-controls,
+.priors-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 0 0 14px;
+}
+
+.inventory-controls .view-switch,
+.priors-controls .view-switch {
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.inventory-search {
+  flex: 1 1 180px;
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font: inherit;
+  font-size: 0.9rem;
+  background: var(--surface);
+  color: var(--ink);
+  min-width: 140px;
+}
+
+.inventory-search:focus {
+  outline: 2px solid var(--brand);
+  outline-offset: 1px;
+}
+
+.sort-sep {
+  color: var(--line);
+  font-size: 1.1rem;
+  line-height: 1;
+  user-select: none;
+}
+
+.sort-select-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 0.85rem;
+  font-weight: 750;
+  cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease;
+}
+
+.sort-select-wrap:hover {
+  background: var(--surface-strong);
+}
+
+.sort-select-wrap i {
+  color: var(--muted);
+  font-size: 0.9rem;
+  pointer-events: none;
+}
+
+.sort-select-wrap select {
+  border: none;
+  background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='none' stroke='%2365736b' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' d='M2 4l4 4 4-4'/%3E%3C/svg%3E") no-repeat right 2px center;
+  color: inherit;
+  font: inherit;
+  font-weight: 750;
+  font-size: 0.85rem;
+  cursor: pointer;
+  outline: none;
+  padding: 0 18px 0 0;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.custom-select {
+  position: relative;
+  display: inline-block;
+}
+
+.custom-select-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+
+.custom-select-list {
+  position: absolute;
+  right: 0;
+  margin-top: 8px;
+  min-width: 160px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 8px 20px rgba(18, 42, 31, 0.12);
+  list-style: none;
+  padding: 6px;
+  z-index: 50;
+}
+
+.custom-select-item {
+  padding: 8px 10px;
+  border-radius: 6px;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.custom-select-item:hover,
+.custom-select-item[aria-selected="true"] {
+  background: var(--surface-strong);
+}
+
+/* Hide native select visually but keep it in DOM for non-JS fallback */
+.sort-select-wrap > select {
+  position: absolute;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
 }

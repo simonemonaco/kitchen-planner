@@ -10,10 +10,13 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
+from google import genai
+
 from flask import (
     Flask,
     flash,
     g,
+    jsonify,
     redirect,
     render_template,
     request,
@@ -28,7 +31,10 @@ from supabase import Client, create_client
 LOCATIONS = {
     "frigo": "Frigo",
     "dispensa": "Dispensa",
+    "freezer": "Freezer",
 }
+
+UNITS = ["pz", "g", "ml", "l", "kg"]
 
 CATEGORIES = [
     "Carne",
@@ -117,12 +123,6 @@ DEFAULT_PRIOR_ITEMS = [
         "typical_shelf_life_days": 3,
     },
 ]
-
-INGREDIENT_IMAGE_FALLBACKS = {
-    "melanzane": "Aubergine",
-    "mele": "Apple",
-    "riso": "Rice",
-}
 
 REQUIRED_TABLES = [
     "item_prior",
@@ -220,15 +220,19 @@ def ensure_supabase_schema() -> None:
         )
 
 
+def _format_qty(value: float | int | None) -> str:
+    if value in (None, ""):
+        return ""
+    number = float(value)
+    if number.is_integer():
+        return str(int(number))
+    return f"{number:.2f}".rstrip("0").rstrip(".")
+
+
 def register_template_helpers(app: Flask) -> None:
     @app.template_filter("qty")
     def qty(value: float | int | None) -> str:
-        if value in (None, ""):
-            return ""
-        number = float(value)
-        if number.is_integer():
-            return str(int(number))
-        return f"{number:.2f}".rstrip("0").rstrip(".")
+        return _format_qty(value)
 
     @app.template_filter("money")
     def money(value: float | int | None) -> str:
@@ -255,6 +259,7 @@ def register_template_helpers(app: Flask) -> None:
         return {
             "locations": LOCATIONS,
             "categories": CATEGORIES,
+            "units": UNITS,
             "today": date.today().isoformat(),
             "now_local_value": datetime.now().strftime("%Y-%m-%dT%H:%M"),
         }
@@ -344,11 +349,21 @@ def register_routes(app: Flask) -> None:
             flash("Prodotto aggiornato.", "success")
             return redirect(url_for("index"))
 
+        history_resp = (
+            get_supabase()
+            .table("items_history")
+            .select("purchased_at")
+            .eq("inventory_item_id", item_id)
+            .limit(1)
+            .execute()
+        )
+        purchased_at = history_resp.data[0]["purchased_at"] if history_resp.data else None
         return render_template(
             "inventory_form.html",
             item=dict(item),
             mode="edit",
             prior_options=list_item_prior_options(),
+            purchased_at=purchased_at,
         )
 
     @app.post("/inventory/<int:item_id>/finish")
@@ -377,13 +392,18 @@ def register_routes(app: Flask) -> None:
 
     @app.post("/inventory/<int:item_id>/adjust")
     def adjust_inventory_quantity(item_id: int):
+        is_xhr = request.headers.get("X-Requested-With") == "XMLHttpRequest"
         item = get_inventory_item(item_id)
         if not item:
+            if is_xhr:
+                return jsonify({"ok": False, "error": "Prodotto non trovato."}), 404
             flash("Prodotto non trovato.", "error")
             return redirect(url_for("index"))
 
         direction = clean_text(request.form.get("direction")).lower()
         if direction not in {"inc", "dec"}:
+            if is_xhr:
+                return jsonify({"ok": False, "error": "Azione quantita' non valida."}), 400
             flash("Azione quantita' non valida.", "error")
             return redirect(url_for("index"))
 
@@ -392,6 +412,8 @@ def register_routes(app: Flask) -> None:
         new_quantity = current_quantity + step if direction == "inc" else current_quantity - step
 
         if new_quantity <= 0:
+            if is_xhr:
+                return jsonify({"ok": False, "error": "La quantita' non puo' scendere sotto zero."}), 400
             flash("La quantita' non puo' scendere sotto zero.", "error")
             return redirect(url_for("index"))
 
@@ -404,6 +426,11 @@ def register_routes(app: Flask) -> None:
             "notes": item.get("notes") or "",
         }
         update_inventory_item(item_id, int(item["item_prior_id"]), payload)
+        if is_xhr:
+            return jsonify({
+                "ok": True,
+                "qty_display": f"{_format_qty(new_quantity)} {item['unit']}",
+            })
         return redirect(url_for("index", location=request.args.get("location", ""), view=request.args.get("view", "")))
 
     @app.get("/inventory/receipt")
@@ -427,6 +454,7 @@ def register_routes(app: Flask) -> None:
 
         matched, unmatched = classify_receipt_rows(rows)
         session["receipt_rows"] = rows
+        session["receipt_purchased_at"] = parse_receipt_date(receipt_text)
         return render_template(
             "receipt_match.html",
             matched=matched,
@@ -442,6 +470,7 @@ def register_routes(app: Flask) -> None:
         unmatched_ids = request.form.getlist("unmatched_row_ids")
         unresolved = []
         added_count = 0
+        purchased_at = session.get("receipt_purchased_at") or utc_now()
 
         for row_id in matched_ids:
             row = rows.get(row_id)
@@ -463,6 +492,7 @@ def register_routes(app: Flask) -> None:
                 unit=clean_text(request.form.get(f"unit_{row_id}"), prior["typical_unit"] or "pz"),
                 cost=row.get("price"),
                 description=row["description"],
+                purchased_at=purchased_at,
             )
             added_count += 1
 
@@ -491,6 +521,7 @@ def register_routes(app: Flask) -> None:
         include_ids = request.form.getlist("include_row_ids")
         added_count = 0
 
+        purchased_at = session.get("receipt_purchased_at") or utc_now()
         for row_id in include_ids:
             row = rows.get(row_id)
             if not row:
@@ -520,10 +551,12 @@ def register_routes(app: Flask) -> None:
                 unit=clean_text(request.form.get(f"unit_{row_id}"), (prior["typical_unit"] if prior else "") or "pz"),
                 cost=row.get("price"),
                 description=row["description"],
+                purchased_at=purchased_at,
             )
             added_count += 1
 
         session.pop("receipt_rows", None)
+        session.pop("receipt_purchased_at", None)
         session.pop("receipt_unresolved_rows", None)
         flash(f"{added_count} prodotti aggiunti alla cucina.", "success")
         return redirect(url_for("index"))
@@ -624,6 +657,41 @@ def register_routes(app: Flask) -> None:
         flash("Voce eliminata dalla lista della spesa.", "success")
         return redirect(url_for("shopping"))
 
+    @app.post("/shopping/<int:item_id>/adjust")
+    def adjust_shopping_quantity(item_id: int):
+        is_xhr = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        item = get_shopping_item(item_id)
+        if not item:
+            if is_xhr:
+                return jsonify({"ok": False, "error": "Voce non trovata."}), 404
+            flash("Voce della lista non trovata.", "error")
+            return redirect(url_for("shopping"))
+
+        direction = clean_text(request.form.get("direction")).lower()
+        if direction not in {"inc", "dec"}:
+            if is_xhr:
+                return jsonify({"ok": False, "error": "Azione non valida."}), 400
+            flash("Azione quantita' non valida.", "error")
+            return redirect(url_for("shopping"))
+
+        step = quantity_adjust_step(item.get("unit"), item.get("typical_quantity"))
+        current_quantity = float(item.get("quantity") or 0)
+        new_quantity = current_quantity + step if direction == "inc" else current_quantity - step
+
+        if new_quantity <= 0:
+            if is_xhr:
+                return jsonify({"ok": False, "error": "La quantita' non puo' scendere sotto zero."}), 400
+            flash("La quantita' non puo' scendere sotto zero.", "error")
+            return redirect(url_for("shopping"))
+
+        update_shopping_item_quantity(item_id, new_quantity)
+        if is_xhr:
+            return jsonify({
+                "ok": True,
+                "qty_display": f"{_format_qty(new_quantity)} {item['unit']}",
+            })
+        return redirect(url_for("shopping"))
+
     @app.get("/history")
     def history():
         items = list_history_items()
@@ -664,6 +732,68 @@ def register_routes(app: Flask) -> None:
             return redirect(url_for("priors"))
 
         return render_template("prior_form.html", item=dict(prior))
+
+    @app.get("/settings/priors/<int:prior_id>/enrich")
+    def enrich_prior_preview(prior_id: int):
+        """Show a preview of LLM-suggested metadata and allow accept/decline."""
+        prior = get_item_prior(prior_id)
+        if not prior:
+            flash("Prodotto prior non trovato.", "error")
+            return redirect(url_for("priors"))
+
+        api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+        if not api_key:
+            flash("GEMINI_API_KEY non configurato.", "error")
+            return redirect(url_for("edit_prior", prior_id=prior_id))
+
+        llm, raw_llm = enrich_prior_with_llm(prior["name"])
+        if not llm and not raw_llm:
+            flash("Nessun dato utile restituito dall'LLM.", "error")
+            return redirect(url_for("edit_prior", prior_id=prior_id))
+
+        # build suggested values without overwriting yet
+        suggested = {
+            "category": llm.get("category") or prior.get("category"),
+            "typical_quantity": llm.get("typical_quantity") if llm.get("typical_quantity") is not None else prior.get("typical_quantity"),
+            "typical_unit": llm.get("typical_unit") or prior.get("typical_unit"),
+            "typical_shelf_life_days": llm.get("typical_shelf_life_days") if llm.get("typical_shelf_life_days") is not None else prior.get("typical_shelf_life_days"),
+            "default_location": llm.get("default_location") or prior.get("default_location"),
+            "picture": llm.get("picture") or None,
+        }
+
+        return render_template("prior_enrich_preview.html", prior=prior, suggested=suggested, raw_llm=raw_llm)
+
+    @app.post("/settings/priors/<int:prior_id>/enrich/accept")
+    def enrich_prior_accept(prior_id: int):
+        prior = get_item_prior(prior_id)
+        if not prior:
+            flash("Prodotto prior non trovato.", "error")
+            return redirect(url_for("priors"))
+
+        # form will contain suggested values; only update fields that are present
+        merged = {}
+        for key in ("category", "typical_quantity", "typical_unit", "typical_shelf_life_days", "default_location", "picture"):
+            if key in request.form and request.form.get(key) not in (None, ""):
+                value = request.form.get(key)
+                if key in ("typical_quantity", "typical_shelf_life_days"):
+                    try:
+                        if "." in value:
+                            val = float(value)
+                        else:
+                            val = int(value)
+                        merged[key] = val
+                    except (TypeError, ValueError):
+                        continue
+                else:
+                    merged[key] = value
+
+        if not merged:
+            flash("Nessun dato valido da applicare.", "error")
+            return redirect(url_for("edit_prior", prior_id=prior_id))
+
+        update_item_prior(prior_id, merged)
+        flash("Metadati aggiornati dall'LLM.", "success")
+        return redirect(url_for("priors"))
 
 
 def empty_inventory_form() -> dict[str, Any]:
@@ -851,6 +981,27 @@ def shopping_form_data(form: Any) -> dict[str, Any]:
     }
 
 
+def parse_receipt_date(receipt_text: str) -> str | None:
+    """Extract receipt date/time from lines like 'Data: 15/03/2024' and 'Ora: 14:30'."""
+    date_match = re.search(
+        r"[Dd]ata\s*:?\s*(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})",
+        receipt_text,
+    )
+    time_match = re.search(r"[Oo]ra\s*:?\s*(\d{1,2}):(\d{2})", receipt_text)
+    if not date_match:
+        return None
+    try:
+        day = int(date_match.group(1))
+        month = int(date_match.group(2))
+        year = int(date_match.group(3))
+        hour = int(time_match.group(1)) if time_match else 12
+        minute = int(time_match.group(2)) if time_match else 0
+        dt = datetime(year, month, day, hour, minute)
+        return dt.astimezone(UTC).isoformat(timespec="seconds")
+    except ValueError:
+        return None
+
+
 def parse_receipt_rows(receipt_text: str) -> list[dict[str, Any]]:
     rows = []
     inside_table = False
@@ -914,10 +1065,29 @@ def parse_receipt_product_line(line: str) -> dict[str, Any] | None:
     }
 
 
+def get_prior_ids_added_today() -> set[int]:
+    """Return prior IDs for inventory items whose updated_at is today (local date)."""
+    today_prefix = date.today().isoformat()
+    items = (
+        get_supabase()
+        .table("inventory_items")
+        .select("item_prior_id,updated_at")
+        .execute()
+        .data
+        or []
+    )
+    return {
+        int(item["item_prior_id"])
+        for item in items
+        if (item.get("updated_at") or "")[:10] == today_prefix
+    }
+
+
 def classify_receipt_rows(
     rows: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     priors = [dict(row) for row in list_item_prior_options()]
+    prior_ids_today = get_prior_ids_added_today()
     matched = []
     unmatched = []
 
@@ -932,6 +1102,7 @@ def classify_receipt_rows(
                     "prior": prior,
                     "quantity": quantity,
                     "unit": unit,
+                    "added_today": int(prior["id"]) in prior_ids_today,
                 }
             )
         else:
@@ -978,14 +1149,6 @@ def default_prior_quantity(prior: dict[str, Any] | None) -> float:
 
 
 def quantity_adjust_step(unit: str | None, typical_quantity: float | int | None = None) -> float:
-    if typical_quantity is not None:
-        try:
-            parsed_typical = float(typical_quantity)
-        except (TypeError, ValueError):
-            parsed_typical = 0
-        if parsed_typical > 0:
-            return parsed_typical
-
     normalized = clean_text(unit).casefold()
     if normalized in {"pz", "pc", "pezzo", "pezzi", "unita", "u"}:
         return 1.0
@@ -1008,8 +1171,6 @@ def prior_form_data(form: Any) -> dict[str, Any]:
         ),
         "default_location": form.get("default_location", "dispensa"),
         "picture": picture,
-        "picture_source": clean_text(form.get("picture_source"), "manuale" if picture else ""),
-        "source_product_url": clean_text(form.get("source_product_url")),
         "notes": clean_text(form.get("notes")),
     }
 
@@ -1088,21 +1249,35 @@ def ensure_item_prior(
         update_item_prior(prior["id"], merged)
         return int(prior["id"])
 
+    explicit_location = (
+        data.get("default_location") or data.get("location") or data.get("target_location")
+    )
     prior_data = {
         "name": name,
         "category": normalize_category(data.get("category")),
         "typical_quantity": data.get("typical_quantity"),
         "typical_unit": data.get("typical_unit") or data.get("unit") or "pz",
         "typical_shelf_life_days": data.get("typical_shelf_life_days"),
-        "default_location": data.get("default_location")
-        or data.get("location")
-        or data.get("target_location")
-        or "dispensa",
+        "default_location": explicit_location or "dispensa",
         "picture": data.get("picture") or "",
-        "picture_source": "manuale" if data.get("picture") else "",
-        "source_product_url": "",
+        
         "notes": data.get("prior_notes") or data.get("notes") or "",
     }
+
+    # Enrich missing fields via LLM (single OpenRouter call per new product)
+    llm, _raw = enrich_prior_with_llm(name)
+    if llm:
+        if prior_data["category"] == "Altro" and llm.get("category"):
+            prior_data["category"] = llm["category"]
+        if prior_data["typical_quantity"] is None and llm.get("typical_quantity") is not None:
+            prior_data["typical_quantity"] = llm["typical_quantity"]
+        if prior_data["typical_unit"] == "pz" and llm.get("typical_unit"):
+            prior_data["typical_unit"] = llm["typical_unit"]
+        if prior_data["typical_shelf_life_days"] is None and llm.get("typical_shelf_life_days") is not None:
+            prior_data["typical_shelf_life_days"] = llm["typical_shelf_life_days"]
+        if not explicit_location and llm.get("default_location"):
+            prior_data["default_location"] = llm["default_location"]
+
     if not prior_data["picture"] and fetch_picture:
         food_profile = fetch_public_food_profile(name, prior_data.get("category"))
         prior_data = merge_external_prior_data(prior_data, food_profile)
@@ -1115,8 +1290,6 @@ def ensure_item_prior(
         "typical_shelf_life_days": prior_data.get("typical_shelf_life_days"),
         "default_location": prior_data.get("default_location"),
         "picture": prior_data.get("picture"),
-        "picture_source": prior_data.get("picture_source"),
-        "source_product_url": prior_data.get("source_product_url"),
         "notes": prior_data.get("notes"),
         "updated_at": utc_now(),
     }
@@ -1136,10 +1309,7 @@ def merge_prior_data(current: dict[str, Any], incoming: dict[str, Any]) -> dict[
         or current.get("typical_shelf_life_days"),
         "default_location": incoming.get("default_location") or current.get("default_location"),
         "picture": incoming.get("picture") or current.get("picture"),
-        "picture_source": "manuale"
-        if incoming.get("picture")
-        else current.get("picture_source"),
-        "source_product_url": current.get("source_product_url"),
+        
         "notes": incoming.get("prior_notes") or current.get("notes"),
     }
 
@@ -1159,9 +1329,7 @@ def merge_external_prior_data(
         merged["typical_unit"] = food_profile["typical_unit"]
     if not merged.get("picture") and food_profile.get("picture"):
         merged["picture"] = food_profile["picture"]
-        merged["picture_source"] = food_profile.get("picture_source") or "Open Food Facts"
-    if food_profile.get("source_product_url"):
-        merged["source_product_url"] = food_profile["source_product_url"]
+    
     return merged
 
 
@@ -1183,8 +1351,7 @@ def update_item_prior(prior_id: int, data: dict[str, Any]) -> None:
         "typical_shelf_life_days": value("typical_shelf_life_days"),
         "default_location": value("default_location"),
         "picture": value("picture"),
-        "picture_source": value("picture_source"),
-        "source_product_url": value("source_product_url"),
+        
         "notes": value("notes"),
         "updated_at": utc_now(),
     }
@@ -1249,6 +1416,99 @@ def list_item_prior_options() -> list[dict[str, Any]]:
     return sorted(response.data or [], key=lambda row: (row.get("name") or "").casefold())
 
 
+def enrich_prior_with_llm(name: str) -> tuple[dict[str, Any], str | None]:
+    """Call Gemini to fill in missing metadata fields for a new food product prior.
+
+    Returns a validated dict with keys: category, typical_quantity, typical_unit,
+    typical_shelf_life_days, default_location (all may be None if the LLM is uncertain
+    or the call fails).
+    """
+    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        return {}, None
+
+    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash").strip()
+    categories_str = ", ".join(f'"{c}"' for c in CATEGORIES)
+    units_str = ", ".join(f'"{u}"' for u in UNITS)
+
+    prompt = (
+        "Sei un assistente per una app di gestione cucina italiana.\n"
+        "Dato il nome di un prodotto alimentare, rispondi SOLO con un oggetto JSON valido "
+        "(senza markdown, senza testo aggiuntivo) con questi campi:\n"
+        f'- "category": una tra [{categories_str}], oppure null se incerto\n'
+        f'- "typical_quantity": numero positivo (quantità tipica di acquisto), oppure null se incerto\n'
+        f'- "typical_unit": una tra [{units_str}], oppure null se incerto\n'
+        '- "typical_shelf_life_days": intero positivo (giorni di conservazione tipica dopo acquisto), oppure null se incerto o se molto lungo (es. > 365)\n'
+        '- "default_location": "frigo" o "dispensa" in base a dove si conserva normalmente, oppure null se incerto\n'
+        '- "picture": se trovi un URL diretto ad un immagine rappresentativa del prodotto restituisci l\'URL, altrimenti null\n'
+        '- "picture_source": se "picture" è valorizzata, specifica la fonte: "TheMealDB", "Wikimedia Commons" o "Open Food Facts" (o altra fonte riconoscibile)\n'
+        '- "source_product_url": se hai trovato una pagina prodotto sorgente (Open Food Facts o Wikidata), restituisci l\'URL, altrimenti null\n\n'
+        'Cerca l\'immagine o URL prodotto nelle seguenti risorse, in quest\'ordine preferenziale: TheMealDB ingredient images (https://www.themealdb.com/images/ingredients/), Wikidata (immagini su Wikimedia Commons), Open Food Facts (image_front_url). Se trovi più di una fonte preferisci TheMealDB, poi Wikidata, poi Open Food Facts.\n\n'
+        f'Prodotto: "{name}"\n\n'
+        "Rispondi SOLO con il JSON."
+    )
+
+    try:
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(model=model, contents=prompt)
+        content = getattr(response, "text", None) or (response.to_dict().get("output") if hasattr(response, "to_dict") else "") or ""
+    except Exception:
+        return {}, None
+
+    # Strip markdown code fences that some models add
+    content = re.sub(r"```(?:json)?\s*|\s*```", "", content).strip()
+
+    try:
+        raw = json.loads(content)
+    except (json.JSONDecodeError, ValueError):
+        # Return empty parsed dict and raw content so callers can show fallback
+        return {}, content
+
+    if not isinstance(raw, dict):
+        return {}, content
+
+    return _validate_llm_prior_data(raw), content
+
+
+def _validate_llm_prior_data(raw: dict[str, Any]) -> dict[str, Any]:
+    """Validate and sanitize LLM-returned prior fields.
+
+    Each field is checked for type and allowed values. Invalid or absent values
+    are returned as None so callers can apply their own placeholders.
+    """
+    result: dict[str, Any] = {}
+
+    category = raw.get("category")
+    result["category"] = category if isinstance(category, str) and category in CATEGORIES else None
+
+    try:
+        qty = float(raw["typical_quantity"])
+        result["typical_quantity"] = qty if qty > 0 else None
+    except (KeyError, TypeError, ValueError):
+        result["typical_quantity"] = None
+
+    unit = raw.get("typical_unit")
+    result["typical_unit"] = unit if isinstance(unit, str) and unit in UNITS else None
+
+    try:
+        days = int(raw["typical_shelf_life_days"])
+        result["typical_shelf_life_days"] = days if days > 0 else None
+    except (KeyError, TypeError, ValueError):
+        result["typical_shelf_life_days"] = None
+
+    location = raw.get("default_location")
+    result["default_location"] = location if isinstance(location, str) and location in LOCATIONS else None
+
+    # picture
+    picture = raw.get("picture")
+    if isinstance(picture, str) and picture.startswith("http"):
+        result["picture"] = picture
+    else:
+        result["picture"] = None
+
+    return result
+
+
 def fetch_public_food_profile(name: str, category: str | None = None) -> dict[str, Any]:
     if not current_app_config("ENABLE_FOOD_IMAGE_LOOKUP"):
         return {}
@@ -1289,7 +1549,6 @@ def fetch_public_food_profile(name: str, category: str | None = None) -> dict[st
             "typical_quantity": quantity,
             "typical_unit": unit,
             "picture": picture,
-            "source_product_url": product.get("url") or "",
         }
     return fallback_ingredient_profile(name)
 
@@ -1350,8 +1609,6 @@ def fetch_wikidata_food_profile(name: str, category: str | None = None) -> dict[
         encoded_filename = quote(image_filename)
         return {
             "picture": f"https://commons.wikimedia.org/wiki/Special:FilePath/{encoded_filename}",
-            "picture_source": "Wikimedia Commons",
-            "source_product_url": f"https://www.wikidata.org/wiki/{entity_id}",
         }
 
     return {}
@@ -1369,15 +1626,6 @@ def extract_wikidata_image_filename(entity: dict[str, Any]) -> str | None:
     return None
 
 
-def fallback_ingredient_profile(name: str) -> dict[str, Any]:
-    ingredient = INGREDIENT_IMAGE_FALLBACKS.get(name.strip().lower())
-    if not ingredient:
-        return {}
-    return {
-        "picture": f"https://www.themealdb.com/images/ingredients/{ingredient}.png",
-        "picture_source": "TheMealDB",
-        "source_product_url": f"https://www.themealdb.com/ingredient/{ingredient}",
-    }
 
 
 def parse_quantity_label(value: str | None) -> tuple[float | None, str | None]:
@@ -1415,8 +1663,7 @@ def merge_item_with_prior(item: dict[str, Any], prior: dict[str, Any] | None) ->
         "typical_shelf_life_days": prior.get("typical_shelf_life_days"),
         "default_location": prior.get("default_location"),
         "picture": prior.get("picture"),
-        "picture_source": prior.get("picture_source"),
-        "source_product_url": prior.get("source_product_url"),
+        
         "prior_notes": prior.get("notes", ""),
     }
 
@@ -1537,7 +1784,14 @@ def list_shopping_items() -> list[dict[str, Any]]:
     items = get_supabase().table("shopping_items").select("*").execute().data or []
     prior_map = load_item_prior_map([int(item["item_prior_id"]) for item in items])
     merged = [merge_item_with_prior(item, prior_map.get(int(item["item_prior_id"]))) for item in items]
-    return sorted(merged, key=lambda row: ((row.get("target_location") or ""), (row.get("name") or "").casefold()))
+    category_order = {cat: i for i, cat in enumerate(CATEGORIES)}
+    return sorted(
+        merged,
+        key=lambda row: (
+            category_order.get(row.get("category") or "Altro", len(CATEGORIES)),
+            (row.get("name") or "").casefold(),
+        ),
+    )
 
 
 def get_shopping_item(item_id: int) -> dict[str, Any] | None:
@@ -1551,6 +1805,10 @@ def get_shopping_item(item_id: int) -> dict[str, Any] | None:
 
 def delete_shopping_item(item_id: int) -> None:
     get_supabase().table("shopping_items").delete().eq("id", item_id).execute()
+
+
+def update_shopping_item_quantity(item_id: int, new_quantity: float) -> None:
+    get_supabase().table("shopping_items").update({"quantity": new_quantity}).eq("id", item_id).execute()
 
 
 def complete_shopping_purchase(
@@ -1630,6 +1888,7 @@ def add_receipt_item_to_kitchen(
     unit: str,
     cost: float | None,
     description: str,
+    purchased_at: str | None = None,
 ) -> int:
     prior = get_item_prior(prior_id)
     if not prior:
@@ -1654,7 +1913,7 @@ def add_receipt_item_to_kitchen(
         {
             "item_prior_id": prior_id,
             "inventory_item_id": inventory_item_id,
-            "purchased_at": utc_now(),
+            "purchased_at": purchased_at or utc_now(),
             "quantity": quantity,
             "unit": unit,
             "cost": cost,

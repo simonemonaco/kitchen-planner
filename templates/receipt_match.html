@@ -17,7 +17,7 @@
         {% for row in matched %}
           <article class="receipt-row">
             <label class="check-row">
-              <input type="checkbox" name="selected_row_ids" value="{{ row.id }}" checked>
+              <input type="checkbox" name="selected_row_ids" value="{{ row.id }}" {% if not row.added_today %}checked{% endif %}>
               <span></span>
             </label>
             <div class="item-main">
@@ -41,7 +41,11 @@
               </label>
               <label>
                 Unita'
-                <input name="unit_{{ row.id }}" value="{{ row.unit }}" required>
+                <select name="unit_{{ row.id }}" required>
+                  {% for u in units %}
+                    <option value="{{ u }}" {% if row.unit == u %}selected{% endif %}>{{ u }}</option>
+                  {% endfor %}
+                </select>
               </label>
             </div>
           </article>
