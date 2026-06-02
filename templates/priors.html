@@ -65,10 +65,33 @@
           </article>
         {% endfor %}
       </div>
+      <div id="prior-no-results" hidden class="empty-state">
+        <h3>Nessun risultato per "<span id="prior-no-results-term"></span>"</h3>
+        <p>Vuoi creare un nuovo prior con questo nome?</p>
+        <div class="form-actions">
+          <a class="button secondary" id="prior-new-manual-btn" href="{{ url_for('new_prior') }}"><i class="fa-solid fa-pen" aria-hidden="true"></i> Aggiungi manualmente</a>
+          <form method="post" action="{{ url_for('new_prior_with_llm') }}" style="display:contents">
+            <input type="hidden" name="name" id="prior-new-llm-name">
+            <button class="button" type="submit"><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i> Crea con LLM</button>
+          </form>
+        </div>
+      </div>
     {% else %}
       <div class="empty-state">
-        <h3>Nessun prodotto prior</h3>
-        <p>Inserisci prodotti da inventario o lista spesa per creare automaticamente i prior.</p>
+        {% if query %}
+          <h3>Nessun risultato per "{{ query }}"</h3>
+          <p>Vuoi creare un nuovo prior con questo nome?</p>
+          <div class="form-actions">
+            <a class="button secondary" href="{{ url_for('new_prior', name=query) }}"><i class="fa-solid fa-pen" aria-hidden="true"></i> Aggiungi manualmente</a>
+            <form method="post" action="{{ url_for('new_prior_with_llm') }}" style="display:contents">
+              <input type="hidden" name="name" value="{{ query }}">
+              <button class="button" type="submit"><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i> Crea con LLM</button>
+            </form>
+          </div>
+        {% else %}
+          <h3>Nessun prodotto prior</h3>
+          <p>Inserisci prodotti da inventario o lista spesa per creare automaticamente i prior.</p>
+        {% endif %}
       </div>
     {% endif %}
   </section>
@@ -81,6 +104,10 @@
   const filterInput = document.querySelector('[data-prior-filter]');
   const sortButtons = Array.from(document.querySelectorAll('[data-prior-sort]'));
   const list = document.querySelector('.prior-row')?.parentElement;
+  const noResults = document.getElementById('prior-no-results');
+  const noResultsTerm = document.getElementById('prior-no-results-term');
+  const newManualBtn = document.getElementById('prior-new-manual-btn');
+  const newLlmName = document.getElementById('prior-new-llm-name');
 
   if (!list) return;
 
@@ -93,6 +120,20 @@
       const cat  = (row.dataset.category || '');
       row.hidden = needle !== '' && !name.includes(needle) && !cat.includes(needle);
     });
+
+    if (noResults) {
+      const allHidden = needle !== '' && rows().every(row => row.hidden);
+      noResults.hidden = !allHidden;
+      if (allHidden) {
+        if (noResultsTerm) noResultsTerm.textContent = q.trim();
+        if (newManualBtn) {
+          const url = new URL(newManualBtn.href, location.href);
+          url.searchParams.set('name', q.trim());
+          newManualBtn.href = url.toString();
+        }
+        if (newLlmName) newLlmName.value = q.trim();
+      }
+    }
   }
 
   function applySort(by) {

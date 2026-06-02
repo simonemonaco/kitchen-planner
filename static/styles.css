@@ -653,6 +653,27 @@ textarea:focus {
   font-size: 0.86rem;
 }
 
+.prior-llm-status {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 8px;
+  border: 1px solid #cbe3d9;
+  background: linear-gradient(135deg, #edf8f3, #f6fbf8);
+}
+
+.prior-llm-status.is-hidden {
+  display: none;
+}
+
+.prior-llm-status-text {
+  margin: 0;
+  color: var(--brand-dark);
+  font-weight: 800;
+}
+
 .receipt-ocr-status {
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr);

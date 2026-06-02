@@ -5,3 +5,6 @@ instance/
 .pytest_cache/
 .env
 tests/
+.vscode/launch.json
+.gitignore
+TODO

@@ -56,8 +56,38 @@
     const decrease = control.querySelector("[data-qty-action='decrease']");
     const increase = control.querySelector("[data-qty-action='increase']");
 
+    function swapUnitOnDecrease(current, action) {
+      if (action !== "decrease" || !unitField) {
+        return null;
+      }
+
+      const normalizedUnit = normalizeUnit(unitField.value);
+      if (!(["kg", "l", "lt"].includes(normalizedUnit)) || current > 1) {
+        return null;
+      }
+
+      const nextUnit = normalizedUnit === "kg" ? "g" : "ml";
+      const nextValue = roundToStep(current * 1000 - 100, 100);
+      if (nextValue <= 0) {
+        return null;
+      }
+
+      unitField.value = nextUnit;
+      unitField.dispatchEvent(new Event("input", { bubbles: true }));
+      unitField.dispatchEvent(new Event("change", { bubbles: true }));
+      return nextValue;
+    }
+
     function apply(action) {
       const current = parseNumber(input.value, parseNumber(input.min, 1));
+      const swappedValue = swapUnitOnDecrease(current, action);
+      if (swappedValue !== null) {
+        input.value = String(swappedValue);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+        return;
+      }
+
       const step = resolveStep(input, unitField);
       const minValue = parseNumber(input.min, 0.01);
       const delta = action === "increase" ? step : -step;

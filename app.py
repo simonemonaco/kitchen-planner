@@ -37,16 +37,16 @@ LOCATIONS = {
 UNITS = ["pz", "g", "ml", "l", "kg"]
 
 CATEGORIES = [
+    "Latticini",
+    "Verdura",
+    "Frutta",
+    "Formaggi",
     "Carne",
     "Pesce",
     "Uova",
-    "Latticini",
-    "Formaggi",
     "Cereali",
     "Legumi",
     "Pasta",
-    "Verdura",
-    "Frutta",
     "Dolci",
     "Altro",
 ]
@@ -407,9 +407,12 @@ def register_routes(app: Flask) -> None:
             flash("Azione quantita' non valida.", "error")
             return redirect(url_for("index"))
 
-        step = quantity_adjust_step(item.get("unit"), item.get("typical_quantity"))
         current_quantity = float(item.get("quantity") or 0)
-        new_quantity = current_quantity + step if direction == "inc" else current_quantity - step
+        new_quantity, new_unit = adjust_quantity_with_unit(
+            current_quantity,
+            item.get("unit"),
+            direction,
+        )
 
         if new_quantity <= 0:
             if is_xhr:
@@ -419,7 +422,7 @@ def register_routes(app: Flask) -> None:
 
         payload = {
             "quantity": new_quantity,
-            "unit": item["unit"],
+            "unit": new_unit,
             "location": item["location"],
             "expiry_date": item.get("expiry_date"),
             "expiry_estimated": item.get("expiry_estimated") or 0,
@@ -429,7 +432,7 @@ def register_routes(app: Flask) -> None:
         if is_xhr:
             return jsonify({
                 "ok": True,
-                "qty_display": f"{_format_qty(new_quantity)} {item['unit']}",
+                "qty_display": f"{_format_qty(new_quantity)} {new_unit}",
             })
         return redirect(url_for("index", location=request.args.get("location", ""), view=request.args.get("view", "")))
 
@@ -674,9 +677,12 @@ def register_routes(app: Flask) -> None:
             flash("Azione quantita' non valida.", "error")
             return redirect(url_for("shopping"))
 
-        step = quantity_adjust_step(item.get("unit"), item.get("typical_quantity"))
         current_quantity = float(item.get("quantity") or 0)
-        new_quantity = current_quantity + step if direction == "inc" else current_quantity - step
+        new_quantity, new_unit = adjust_quantity_with_unit(
+            current_quantity,
+            item.get("unit"),
+            direction,
+        )
 
         if new_quantity <= 0:
             if is_xhr:
@@ -684,11 +690,11 @@ def register_routes(app: Flask) -> None:
             flash("La quantita' non puo' scendere sotto zero.", "error")
             return redirect(url_for("shopping"))
 
-        update_shopping_item_quantity(item_id, new_quantity)
+        update_shopping_item(item_id, new_quantity, new_unit)
         if is_xhr:
             return jsonify({
                 "ok": True,
-                "qty_display": f"{_format_qty(new_quantity)} {item['unit']}",
+                "qty_display": f"{_format_qty(new_quantity)} {new_unit}",
             })
         return redirect(url_for("shopping"))
 
@@ -708,6 +714,79 @@ def register_routes(app: Flask) -> None:
         query = request.args.get("q", "").strip()
         items = list_item_priors(query)
         return render_template("priors.html", items=items, query=query)
+
+    @app.route("/settings/priors/new", methods=("GET", "POST"))
+    def new_prior():
+        if request.method == "POST":
+            data = prior_form_data(request.form)
+            errors = validate_prior_data(data)
+            if errors:
+                for error in errors:
+                    flash(error, "error")
+                return render_template("prior_form.html", item=data), 400
+
+            supabase = get_supabase()
+            existing = supabase.table("item_prior").select("id").ilike("name", data["name"]).limit(1).execute()
+            if existing.data:
+                flash("Esiste già un prior con questo nome.", "error")
+                return render_template("prior_form.html", item=data), 400
+
+            payload = {
+                "name": data["name"],
+                "category": data.get("category"),
+                "typical_quantity": data.get("typical_quantity"),
+                "typical_unit": data.get("typical_unit") or "pz",
+                "typical_shelf_life_days": data.get("typical_shelf_life_days"),
+                "default_location": data.get("default_location") or "dispensa",
+                "picture": data.get("picture") or "",
+                "notes": data.get("notes") or "",
+                "updated_at": utc_now(),
+            }
+            response = supabase.table("item_prior").insert(payload).execute()
+            if not response.data:
+                flash("Creazione prior non riuscita.", "error")
+                return render_template("prior_form.html", item=data), 500
+
+            flash("Prodotto prior creato.", "success")
+            return redirect(url_for("priors"))
+
+        name = request.args.get("name", "").strip()
+        return render_template("prior_form.html", item={"name": name})
+
+    @app.post("/settings/priors/new-llm")
+    def new_prior_with_llm():
+        name = request.form.get("name", "").strip()
+        if not name:
+            flash("Il nome del prodotto è obbligatorio.", "error")
+            return redirect(url_for("priors"))
+
+        api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+        if not api_key:
+            flash("GEMINI_API_KEY non configurato.", "error")
+            return redirect(url_for("priors"))
+
+        supabase = get_supabase()
+        existing = supabase.table("item_prior").select("id").ilike("name", name).limit(1).execute()
+        if existing.data:
+            prior_id = existing.data[0]["id"]
+        else:
+            payload = {
+                "name": name,
+                "category": None,
+                "typical_quantity": None,
+                "typical_unit": "pz",
+                "default_location": "dispensa",
+                "picture": "",
+                "notes": "",
+                "updated_at": utc_now(),
+            }
+            response = supabase.table("item_prior").insert(payload).execute()
+            if not response.data:
+                flash("Creazione prior non riuscita.", "error")
+                return redirect(url_for("priors"))
+            prior_id = response.data[0]["id"]
+
+        return redirect(url_for("enrich_prior_preview", prior_id=prior_id))
 
     @app.route("/settings/priors/<int:prior_id>/edit", methods=("GET", "POST"))
     def edit_prior(prior_id: int):
@@ -1159,6 +1238,24 @@ def quantity_adjust_step(unit: str | None, typical_quantity: float | int | None 
     return 1.0
 
 
+def adjust_quantity_with_unit(
+    current_quantity: float,
+    unit: str | None,
+    direction: str,
+) -> tuple[float, str]:
+    normalized = clean_text(unit).casefold()
+    current_unit = clean_text(unit, "pz")
+
+    if direction == "dec" and normalized in {"kg", "l", "lt"} and current_quantity <= 1.0:
+        converted_unit = "g" if normalized == "kg" else "ml"
+        converted_quantity = (current_quantity * 1000.0) - 100.0
+        return round(converted_quantity, 4), converted_unit
+
+    step = quantity_adjust_step(current_unit)
+    new_quantity = current_quantity + step if direction == "inc" else current_quantity - step
+    return round(new_quantity, 4), current_unit
+
+
 def prior_form_data(form: Any) -> dict[str, Any]:
     picture = clean_text(form.get("picture"))
     return {
@@ -1249,34 +1346,22 @@ def ensure_item_prior(
         update_item_prior(prior["id"], merged)
         return int(prior["id"])
 
-    explicit_location = (
-        data.get("default_location") or data.get("location") or data.get("target_location")
-    )
+    explicit_location = data.get("default_location") or data.get("location") or data.get("target_location")
+    inferred = infer_prior_profile_with_fallback(name)
+    explicit_category = normalize_category(data.get("category"))
+    explicit_unit = data.get("typical_unit") or data.get("unit")
+
     prior_data = {
         "name": name,
-        "category": normalize_category(data.get("category")),
-        "typical_quantity": data.get("typical_quantity"),
-        "typical_unit": data.get("typical_unit") or data.get("unit") or "pz",
-        "typical_shelf_life_days": data.get("typical_shelf_life_days"),
-        "default_location": explicit_location or "dispensa",
-        "picture": data.get("picture") or "",
-        
+        "category": inferred.get("category") if explicit_category == "Altro" else explicit_category,
+        "typical_quantity": data.get("typical_quantity") if data.get("typical_quantity") is not None else inferred.get("typical_quantity"),
+        "typical_unit": explicit_unit or inferred.get("typical_unit") or "pz",
+        "typical_shelf_life_days": data.get("typical_shelf_life_days") if data.get("typical_shelf_life_days") is not None else inferred.get("typical_shelf_life_days"),
+        "default_location": explicit_location or inferred.get("default_location") or "dispensa",
+        "picture": data.get("picture") or inferred.get("picture") or "",
+
         "notes": data.get("prior_notes") or data.get("notes") or "",
     }
-
-    # Enrich missing fields via LLM (single OpenRouter call per new product)
-    llm, _raw = enrich_prior_with_llm(name)
-    if llm:
-        if prior_data["category"] == "Altro" and llm.get("category"):
-            prior_data["category"] = llm["category"]
-        if prior_data["typical_quantity"] is None and llm.get("typical_quantity") is not None:
-            prior_data["typical_quantity"] = llm["typical_quantity"]
-        if prior_data["typical_unit"] == "pz" and llm.get("typical_unit"):
-            prior_data["typical_unit"] = llm["typical_unit"]
-        if prior_data["typical_shelf_life_days"] is None and llm.get("typical_shelf_life_days") is not None:
-            prior_data["typical_shelf_life_days"] = llm["typical_shelf_life_days"]
-        if not explicit_location and llm.get("default_location"):
-            prior_data["default_location"] = llm["default_location"]
 
     if not prior_data["picture"] and fetch_picture:
         food_profile = fetch_public_food_profile(name, prior_data.get("category"))
@@ -1414,6 +1499,46 @@ def list_item_prior_options() -> list[dict[str, Any]]:
         "id,name,category,typical_quantity,typical_unit,typical_shelf_life_days,default_location,picture,notes"
     ).execute()
     return sorted(response.data or [], key=lambda row: (row.get("name") or "").casefold())
+
+
+def fallback_ingredient_profile(name: str) -> dict[str, Any]:
+    """Return a resilient default profile when AI/external enrichment is unavailable."""
+    normalized = normalize_match_text(name)
+
+    profile = {
+        "category": "Altro",
+        "typical_quantity": 1.0,
+        "typical_unit": "pz",
+        "typical_shelf_life_days": None,
+        "default_location": "dispensa",
+        "picture": "",
+    }
+    return profile
+
+
+def infer_prior_profile_with_fallback(name: str) -> dict[str, Any]:
+    """Infer prior fields with LLM first, then fall back to deterministic defaults."""
+    fallback = fallback_ingredient_profile(name)
+    try:
+        llm, _raw = enrich_prior_with_llm(name)
+    except Exception:
+        return fallback
+    if not llm:
+        return fallback
+
+    merged = fallback.copy()
+    for key in (
+        "category",
+        "typical_quantity",
+        "typical_unit",
+        "typical_shelf_life_days",
+        "default_location",
+        "picture",
+    ):
+        value = llm.get(key)
+        if value not in (None, ""):
+            merged[key] = value
+    return merged
 
 
 def enrich_prior_with_llm(name: str) -> tuple[dict[str, Any], str | None]:
@@ -1807,8 +1932,8 @@ def delete_shopping_item(item_id: int) -> None:
     get_supabase().table("shopping_items").delete().eq("id", item_id).execute()
 
 
-def update_shopping_item_quantity(item_id: int, new_quantity: float) -> None:
-    get_supabase().table("shopping_items").update({"quantity": new_quantity}).eq("id", item_id).execute()
+def update_shopping_item(item_id: int, new_quantity: float, unit: str) -> None:
+    get_supabase().table("shopping_items").update({"quantity": new_quantity, "unit": unit}).eq("id", item_id).execute()
 
 
 def complete_shopping_purchase(

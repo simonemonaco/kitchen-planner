@@ -7,7 +7,7 @@ create table if not exists public.item_prior (
     typical_quantity double precision,
     typical_unit text,
     typical_shelf_life_days integer,
-    default_location text not null default 'dispensa' check (default_location in ('frigo', 'dispensa')),
+    default_location text not null default 'dispensa' check (lower(default_location) in ('frigo', 'dispensa', 'freezer')),
     picture text,
     
     notes text,

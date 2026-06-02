@@ -1,15 +1,15 @@
 {% extends "base.html" %}
 
-{% block title %}Modifica prior - Kitchen Planner{% endblock %}
+{% block title %}{% if item.id %}Modifica{% else %}Nuovo{% endif %} prior - Kitchen Planner{% endblock %}
 
 {% block content %}
   <section class="form-shell">
     <div class="form-heading">
       <p class="eyebrow">Prodotti prior</p>
-      <h2>Modifica prior</h2>
+      <h2>{% if item.id %}Modifica prior{% else %}Nuovo prior{% endif %}</h2>
     </div>
 
-    <form class="form-panel" method="post">
+    <form class="form-panel" method="post" action="{% if item.id %}{{ url_for('edit_prior', prior_id=item.id) }}{% else %}{{ url_for('new_prior') }}{% endif %}">
       <label>
         Nome prodotto
         <input name="name" value="{{ item.name }}" required autocomplete="off">
@@ -76,7 +76,7 @@
         {% if item.id %}
           <a class="button secondary" href="{{ url_for('enrich_prior_preview', prior_id=item.id) }}"><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i> Arricchisci con LLM</a>
         {% endif %}
-        <button class="button" type="submit"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i> Salva modifiche</button>
+        <button class="button" type="submit"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i> {% if item.id %}Salva modifiche{% else %}Crea prior{% endif %}</button>
       </div>
     </form>
   </section>

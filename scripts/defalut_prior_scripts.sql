@@ -1,3 +1,11 @@
+-- Allow freezer in default_location to avoid item_prior_default_location_check errors.
+ALTER TABLE public.inventory_items
+    DROP CONSTRAINT IF EXISTS inventory_items_location_check;
+
+ALTER TABLE public.inventory_items
+    ADD CONSTRAINT inventory_items_location_check
+    CHECK (lower(location) IN ('frigo', 'dispensa', 'freezer'));
+
 INSERT INTO public.item_prior (
     name,
     category,

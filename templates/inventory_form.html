@@ -11,7 +11,7 @@
       <h2>{% if mode == "edit" %}Modifica prodotto{% else %}Nuovo prodotto{% endif %}</h2>
     </div>
 
-    <form class="form-panel" method="post" data-prior-picker data-today="{{ today }}">
+    <form class="form-panel" method="post" data-prior-picker data-prior-llm-loading data-today="{{ today }}">
       <input type="hidden" name="item_prior_id" value="{{ item.item_prior_id or '' }}" data-prior-id>
       <input type="hidden" name="notes" value="{{ item.notes or '' }}">
       <input type="hidden" name="expiry_estimated" value="{{ item.expiry_estimated or 0 }}" data-prior-expiry-estimated>
@@ -32,6 +32,11 @@
           </option>
         {% endfor %}
       </datalist>
+
+      <div class="prior-llm-status is-hidden" data-prior-llm-status role="status" aria-live="polite">
+        <span class="receipt-spinner" aria-hidden="true"></span>
+        <p class="prior-llm-status-text">Analizzo il nuovo prodotto con LLM, attendi...</p>
+      </div>
 
       <div class="field-grid">
         <label>
@@ -71,8 +76,11 @@
       {% endif %}
 
       <div class="form-actions">
+        {% if mode == "edit" and item.item_prior_id %}
+          <a class="button secondary" href="{{ url_for('edit_prior', prior_id=item.item_prior_id) }}"><i class="fa-solid fa-sliders" aria-hidden="true"></i> Modifica prior</a>
+        {% endif %}
         <a class="button secondary" href="{{ url_for('index') }}"><i class="fa-solid fa-xmark" aria-hidden="true"></i> Annulla</a>
-        <button class="button" type="submit">
+        <button class="button" type="submit" data-prior-submit-button>
           <i class="fa-solid fa-floppy-disk" aria-hidden="true"></i>
           {% if mode == "edit" %}Salva modifiche{% else %}Aggiungi{% endif %}
         </button>

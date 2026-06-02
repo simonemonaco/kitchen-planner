@@ -82,6 +82,35 @@
     }
   }
 
+  function setupLlmLoading(form) {
+    if (!form.hasAttribute("data-prior-llm-loading")) {
+      return;
+    }
+
+    const input = form.querySelector("[data-prior-name]");
+    const idInput = form.querySelector("[data-prior-id]");
+    const status = form.querySelector("[data-prior-llm-status]");
+    const submitButton = form.querySelector("[data-prior-submit-button]");
+    if (!input || !idInput) {
+      return;
+    }
+
+    form.addEventListener("submit", () => {
+      const hasName = input.value.trim().length > 0;
+      const hasExistingPrior = idInput.value.trim().length > 0;
+      if (!hasName || hasExistingPrior) {
+        return;
+      }
+
+      if (status) {
+        status.classList.remove("is-hidden");
+      }
+      if (submitButton) {
+        submitButton.disabled = true;
+      }
+    });
+  }
+
   document.querySelectorAll("[data-prior-picker]").forEach((form) => {
     const input = form.querySelector("[data-prior-name]");
     if (!input) {
@@ -99,5 +128,6 @@
       });
     }
     syncPrior(form);
+    setupLlmLoading(form);
   });
 })();
