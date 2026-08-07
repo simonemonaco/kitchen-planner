@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from html import escape as html_escape
 from difflib import SequenceMatcher
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -11,6 +12,7 @@ from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 from google import genai
+from markupsafe import Markup
 
 from flask import (
     Flask,
@@ -129,7 +131,18 @@ REQUIRED_TABLES = [
     "inventory_items",
     "shopping_items",
     "items_history",
+    "recipes",
+    "recipe_ingredients",
+    "meals",
+    "meal_recipes",
+    "recipe_history",
 ]
+
+MEAL_TYPES = {
+    "colazione": "Colazione",
+    "pranzo": "Pranzo",
+    "cena": "Cena",
+}
 
 TRUTHY_VALUES = {"1", "true", "yes", "on"}
 
@@ -254,6 +267,66 @@ def register_template_helpers(app: Flask) -> None:
             return "-"
         return parsed.strftime("%d/%m/%Y %H:%M")
 
+    @app.template_filter("markdown")
+    def markdown_filter(value: str | None) -> Markup:
+        """Render recipe notes as Markdown, with raw HTML disabled."""
+        text = value or ""
+        try:
+            import markdown
+            import bleach
+            rendered = markdown.markdown(text, extensions=["extra", "nl2br"])
+            rendered = bleach.clean(
+                rendered,
+                tags=["p", "br", "strong", "em", "del", "h1", "h2", "h3", "h4", "ul", "ol", "li", "blockquote", "code", "pre", "a"],
+                attributes={"a": ["href", "title"]},
+                protocols=["http", "https", "mailto"],
+                strip=True,
+            )
+            return Markup(rendered)
+        except ImportError:
+            # Keep Markdown notes useful while dependencies are being installed.
+            # The normal path above provides the complete Markdown implementation.
+            blocks = []
+            list_tag = None
+
+            def close_list() -> None:
+                nonlocal list_tag
+                if list_tag:
+                    blocks.append(f"</{list_tag}>")
+                    list_tag = None
+
+            def inline_markdown(line: str) -> str:
+                rendered = html_escape(line, quote=True)
+                rendered = re.sub(r"`([^`]+)`", r"<code>\1</code>", rendered)
+                rendered = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", rendered)
+                rendered = re.sub(r"__([^_]+)__", r"<strong>\1</strong>", rendered)
+                rendered = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"<em>\1</em>", rendered)
+                rendered = re.sub(r"(?<!_)_([^_]+)_(?!_)", r"<em>\1</em>", rendered)
+                return rendered
+
+            for line in text.splitlines():
+                heading = re.match(r"^\s*(#{1,4})\s+(.+?)\s*$", line)
+                unordered = re.match(r"^\s*[-*+]\s+(.+?)\s*$", line)
+                ordered = re.match(r"^\s*\d+[.)]\s+(.+?)\s*$", line)
+                if heading:
+                    close_list()
+                    level = len(heading.group(1))
+                    blocks.append(f"<h{level}>{inline_markdown(heading.group(2))}</h{level}>")
+                elif unordered or ordered:
+                    tag = "ul" if unordered else "ol"
+                    if list_tag != tag:
+                        close_list()
+                        list_tag = tag
+                        blocks.append(f"<{tag}>")
+                    blocks.append(f"<li>{inline_markdown((unordered or ordered).group(1))}</li>")
+                elif line.strip():
+                    close_list()
+                    blocks.append(f"<p>{inline_markdown(line)}</p>")
+                else:
+                    close_list()
+            close_list()
+            return Markup("".join(blocks))
+
     @app.context_processor
     def inject_globals() -> dict[str, Any]:
         return {
@@ -263,6 +336,18 @@ def register_template_helpers(app: Flask) -> None:
             "today": date.today().isoformat(),
             "now_local_value": datetime.now().strftime("%Y-%m-%dT%H:%M"),
         }
+
+
+def redirect_inventory_context():
+    """Return to the inventory section from which a destructive action started."""
+    location = request.args.get("location", "").strip()
+    view = request.args.get("view", "").strip().lower()
+    params = {}
+    if location in LOCATIONS:
+        params["location"] = location
+    if view in {"grid", "list"}:
+        params["view"] = view
+    return redirect(url_for("index", **params))
 
 
 def register_routes(app: Flask) -> None:
@@ -382,13 +467,13 @@ def register_routes(app: Flask) -> None:
         )
         delete_inventory_item(item_id)
         flash("Prodotto finito: aggiunto alla lista della spesa.", "success")
-        return redirect(url_for("index"))
+        return redirect_inventory_context()
 
     @app.post("/inventory/<int:item_id>/delete")
     def delete_inventory(item_id: int):
         delete_inventory_item(item_id)
         flash("Prodotto eliminato dall'inventario.", "success")
-        return redirect(url_for("index"))
+        return redirect_inventory_context()
 
     @app.post("/inventory/<int:item_id>/adjust")
     def adjust_inventory_quantity(item_id: int):
@@ -709,6 +794,193 @@ def register_routes(app: Flask) -> None:
         stats = load_settings_stats()
         return render_template("settings.html", stats=stats)
 
+    @app.get("/meals")
+    def meals_agenda():
+        meals = list_meals()
+        return render_template("meals_agenda.html", meals=meals)
+
+    @app.route("/meals/new", methods=("GET", "POST"))
+    def new_meal():
+        if request.method == "POST":
+            data = meal_form_data(request.form)
+            errors = validate_meal_data(data)
+            if errors:
+                for error in errors:
+                    flash(error, "error")
+                return render_template("meal_form.html", meal=data, recipes=list_recipes()), 400
+            meal_id = create_meal(data)
+            flash("Pasto aggiunto all'agenda.", "success")
+            return redirect(url_for("meal_detail", meal_id=meal_id))
+        return render_template("meal_form.html", meal=empty_meal_form(), recipes=list_recipes())
+
+    @app.get("/meals/<int:meal_id>")
+    def meal_detail(meal_id: int):
+        meal = get_meal(meal_id)
+        if not meal:
+            flash("Pasto non trovato.", "error")
+            return redirect(url_for("meals_agenda"))
+        selected_ids = {int(recipe["id"]) for recipe in meal.get("recipes", [])}
+        all_recipes = list_recipes()
+        available_recipes = [recipe for recipe in all_recipes if int(recipe["id"]) not in selected_ids]
+        return render_template(
+            "meal_detail.html",
+            meal=meal,
+            ingredients=aggregate_meal_ingredients(meal),
+            available_recipes=available_recipes,
+            existing_recipe_names=[recipe["name"] for recipe in meal.get("recipes", [])],
+        )
+
+    @app.post("/meals/<int:meal_id>/recipes/add")
+    def add_meal_recipe(meal_id: int):
+        meal = get_meal(meal_id)
+        if not meal:
+            flash("Pasto non trovato.", "error")
+            return redirect(url_for("meals_agenda"))
+
+        recipe_id = parse_optional_int(request.form.get("recipe_id"))
+        if not recipe_id or not get_recipe(recipe_id):
+            flash("Seleziona un piatto valido.", "error")
+            return redirect(url_for("meal_detail", meal_id=meal_id))
+
+        if not add_recipe_to_meal(meal_id, recipe_id):
+            flash("Questo piatto è già associato al meal.", "error")
+            return redirect(url_for("meal_detail", meal_id=meal_id))
+        flash("Piatto aggiunto al meal.", "success")
+        return redirect(url_for("meal_detail", meal_id=meal_id))
+
+    @app.post("/meals/<int:meal_id>/recipes/<int:recipe_id>/remove")
+    def remove_meal_recipe(meal_id: int, recipe_id: int):
+        meal = get_meal(meal_id)
+        if not meal:
+            flash("Pasto non trovato.", "error")
+            return redirect(url_for("meals_agenda"))
+        if not any(int(recipe["id"]) == recipe_id for recipe in meal.get("recipes", [])):
+            flash("Piatto non associato a questo meal.", "error")
+            return redirect(url_for("meal_detail", meal_id=meal_id))
+
+        supabase = get_supabase()
+        supabase.table("meal_recipes").delete().eq("meal_id", meal_id).eq("recipe_id", recipe_id).execute()
+        reorder_meal_recipes(meal_id)
+        flash("Piatto rimosso dal meal.", "success")
+        return redirect(url_for("meal_detail", meal_id=meal_id))
+
+    @app.post("/meals/<int:meal_id>/recipes/<int:recipe_id>/move/<direction>")
+    def move_meal_recipe(meal_id: int, recipe_id: int, direction: str):
+        if direction not in {"up", "down"}:
+            flash("Ordine non valido.", "error")
+            return redirect(url_for("meal_detail", meal_id=meal_id))
+        meal = get_meal(meal_id)
+        if not meal:
+            flash("Pasto non trovato.", "error")
+            return redirect(url_for("meals_agenda"))
+
+        links = get_meal_recipe_links(meal_id)
+        index = next((index for index, link in enumerate(links) if int(link["recipe_id"]) == recipe_id), None)
+        if index is None:
+            flash("Piatto non associato a questo meal.", "error")
+            return redirect(url_for("meal_detail", meal_id=meal_id))
+        target = index - 1 if direction == "up" else index + 1
+        if 0 <= target < len(links):
+            links[index], links[target] = links[target], links[index]
+            supabase = get_supabase()
+            for sort_order, link in enumerate(links):
+                supabase.table("meal_recipes").update({"sort_order": sort_order}).eq("id", link["id"]).execute()
+        return redirect(url_for("meal_detail", meal_id=meal_id))
+
+    @app.post("/meals/<int:meal_id>/delete")
+    def delete_meal(meal_id: int):
+        meal = get_meal(meal_id)
+        if not meal:
+            flash("Pasto non trovato.", "error")
+            return redirect(url_for("meals_agenda"))
+        delete_meal_record(meal_id)
+        flash("Pasto eliminato dall'agenda.", "success")
+        return redirect(url_for("meals_agenda"))
+
+    @app.post("/meals/<int:meal_id>/complete")
+    def complete_meal(meal_id: int):
+        meal = get_meal(meal_id)
+        if not meal:
+            flash("Pasto non trovato.", "error")
+            return redirect(url_for("meals_agenda"))
+        supabase = get_supabase()
+        for recipe in meal.get("recipes", []):
+            supabase.table("recipe_history").upsert({"recipe_id": recipe["id"], "cooked_on": meal["meal_date"]}, on_conflict="recipe_id,cooked_on").execute()
+        flash("Pasto segnato come preparato: lo storico delle ricette è stato aggiornato.", "success")
+        return redirect(url_for("meal_detail", meal_id=meal_id))
+
+    @app.post("/meals/<int:meal_id>/shopping/<int:prior_id>")
+    def meal_add_to_shopping(meal_id: int, prior_id: int):
+        meal = get_meal(meal_id)
+        if not meal:
+            flash("Pasto non trovato.", "error")
+            return redirect(url_for("meals_agenda"))
+        ingredient = next((row for row in aggregate_meal_ingredients(meal) if int(row["item_prior_id"]) == prior_id), None)
+        if not ingredient or ingredient["shortage"] <= 0:
+            flash("Questo ingrediente è già disponibile nella quantità necessaria.", "error")
+            return redirect(url_for("meal_detail", meal_id=meal_id))
+        add_or_increment_shopping_item(
+            prior_id,
+            ingredient["shortage"],
+            ingredient["unit"],
+            ingredient["default_location"] or "dispensa",
+            notes=f"Pasto: {meal['name']} ({meal['meal_date']})",
+        )
+        flash(f"{ingredient['name']} aggiunto alla lista della spesa.", "success")
+        return redirect(url_for("meal_detail", meal_id=meal_id))
+
+    @app.get("/settings/recipes")
+    def recipes():
+        query = request.args.get("q", "").strip()
+        return render_template("recipes.html", recipes=list_recipes(query), query=query)
+
+    @app.route("/settings/recipes/new", methods=("GET", "POST"))
+    def new_recipe():
+        meal_id = parse_optional_int(request.form.get("meal_id") if request.method == "POST" else request.args.get("meal_id"))
+        if request.method == "POST":
+            data, ingredients = recipe_form_data(request.form)
+            errors = validate_recipe_data(data, ingredients)
+            if errors:
+                for error in errors:
+                    flash(error, "error")
+                return render_template("recipe_form.html", recipe=data, ingredients=ingredients, prior_options=list_item_prior_options(), meal_id=meal_id), 400
+            recipe_id = create_recipe(data, ingredients)
+            if meal_id and get_meal(meal_id):
+                add_recipe_to_meal(meal_id, recipe_id)
+                flash("Ricetta salvata e associata al meal.", "success")
+                return redirect(url_for("meal_detail", meal_id=meal_id))
+            flash("Ricetta salvata nel ricettario.", "success")
+            return redirect(url_for("recipe_detail", recipe_id=recipe_id))
+        recipe = empty_recipe_form()
+        recipe["name"] = request.args.get("name", "").strip()
+        return render_template("recipe_form.html", recipe=recipe, ingredients=[empty_ingredient()], prior_options=list_item_prior_options(), meal_id=meal_id)
+
+    @app.get("/settings/recipes/<int:recipe_id>")
+    def recipe_detail(recipe_id: int):
+        recipe = get_recipe(recipe_id)
+        if not recipe:
+            flash("Ricetta non trovata.", "error")
+            return redirect(url_for("recipes"))
+        return render_template("recipe_detail.html", recipe=recipe)
+
+    @app.route("/settings/recipes/<int:recipe_id>/edit", methods=("GET", "POST"))
+    def edit_recipe(recipe_id: int):
+        recipe = get_recipe(recipe_id)
+        if not recipe:
+            flash("Ricetta non trovata.", "error")
+            return redirect(url_for("recipes"))
+        if request.method == "POST":
+            data, ingredients = recipe_form_data(request.form)
+            errors = validate_recipe_data(data, ingredients)
+            if errors:
+                for error in errors:
+                    flash(error, "error")
+                return render_template("recipe_form.html", recipe=data | {"id": recipe_id}, ingredients=ingredients, prior_options=list_item_prior_options()), 400
+            update_recipe(recipe_id, data, ingredients)
+            flash("Ricetta aggiornata.", "success")
+            return redirect(url_for("recipe_detail", recipe_id=recipe_id))
+        return render_template("recipe_form.html", recipe=recipe, ingredients=recipe["ingredients"], prior_options=list_item_prior_options())
+
     @app.get("/settings/priors")
     def priors():
         query = request.args.get("q", "").strip()
@@ -811,6 +1083,21 @@ def register_routes(app: Flask) -> None:
             return redirect(url_for("priors"))
 
         return render_template("prior_form.html", item=dict(prior))
+
+    @app.post("/settings/priors/<int:prior_id>/delete")
+    def delete_prior(prior_id: int):
+        prior = get_item_prior(prior_id)
+        if not prior:
+            flash("Prodotto prior non trovato.", "error")
+            return redirect(url_for("priors"))
+
+        deleted, usage = delete_item_prior(prior_id)
+        if not deleted:
+            flash(f"Non puoi eliminare questo prior: è ancora usato da {usage}.", "error")
+            return redirect(url_for("edit_prior", prior_id=prior_id))
+
+        flash("Prodotto prior eliminato.", "success")
+        return redirect(url_for("priors"))
 
     @app.get("/settings/priors/<int:prior_id>/enrich")
     def enrich_prior_preview(prior_id: int):
@@ -1443,6 +1730,24 @@ def update_item_prior(prior_id: int, data: dict[str, Any]) -> None:
     get_supabase().table("item_prior").update(payload).eq("id", prior_id).execute()
 
 
+def delete_item_prior(prior_id: int) -> tuple[bool, str | None]:
+    """Delete an unused prior, keeping all existing inventory history intact."""
+    supabase = get_supabase()
+    references = (
+        ("inventory_items", "l'inventario"),
+        ("shopping_items", "la lista della spesa"),
+        ("items_history", "lo storico"),
+        ("recipe_ingredients", "una ricetta"),
+    )
+    for table, label in references:
+        rows = supabase.table(table).select("id").eq("item_prior_id", prior_id).limit(1).execute().data or []
+        if rows:
+            return False, label
+
+    supabase.table("item_prior").delete().eq("id", prior_id).execute()
+    return True, None
+
+
 def get_item_prior(prior_id: int) -> dict[str, Any] | None:
     response = get_supabase().table("item_prior").select("*").eq("id", prior_id).limit(1).execute()
     return response.data[0] if response.data else None
@@ -1499,6 +1804,307 @@ def list_item_prior_options() -> list[dict[str, Any]]:
         "id,name,category,typical_quantity,typical_unit,typical_shelf_life_days,default_location,picture,notes"
     ).execute()
     return sorted(response.data or [], key=lambda row: (row.get("name") or "").casefold())
+
+
+def empty_meal_form() -> dict[str, Any]:
+    return {"name": "", "meal_date": date.today().isoformat(), "meal_type": "cena", "people_count": 2, "recipe_ids": []}
+
+
+def meal_form_data(form: Any) -> dict[str, Any]:
+    return {
+        "name": clean_text(form.get("name")),
+        "meal_date": clean_text(form.get("meal_date")),
+        "meal_type": clean_text(form.get("meal_type"), "cena"),
+        "people_count": parse_optional_int(form.get("people_count"), 2) or 2,
+        "recipe_ids": parse_id_list(form.getlist("recipe_ids")),
+    }
+
+
+def validate_meal_data(data: dict[str, Any]) -> list[str]:
+    errors = []
+    if not data["name"]:
+        errors.append("Il nome del pasto è obbligatorio.")
+    if not parse_iso_date(data.get("meal_date")):
+        errors.append("Inserisci una data valida.")
+    if data.get("meal_type") not in MEAL_TYPES:
+        errors.append("Scegli colazione, pranzo o cena.")
+    if int(data.get("people_count") or 0) <= 0:
+        errors.append("Il numero di persone deve essere maggiore di zero.")
+    if not data.get("recipe_ids"):
+        errors.append("Seleziona almeno una ricetta.")
+    return errors
+
+
+def empty_recipe_form() -> dict[str, Any]:
+    return {"name": "", "servings": 2, "picture": "", "notes": ""}
+
+
+def empty_ingredient() -> dict[str, Any]:
+    return {"name": "", "quantity": 1, "quantity_is_qb": False, "unit": "pz", "item_prior_id": ""}
+
+
+def upload_ibb_image(file_storage: Any) -> str | None:
+    """Upload a recipe image to ImgBB when IMGBB_API_KEY is configured."""
+    api_key = os.environ.get("IMGBB_API_KEY", "").strip()
+    if not api_key or not file_storage or not getattr(file_storage, "filename", ""):
+        return None
+    import uuid
+    image_bytes = file_storage.read()
+    if not image_bytes:
+        return None
+    boundary = f"----KitchenPlanner{uuid.uuid4().hex}"
+    body = (
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"key\"\r\n\r\n{api_key}\r\n"
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"image\"; filename=\"{file_storage.filename}\"\r\n"
+        f"Content-Type: {file_storage.mimetype or 'application/octet-stream'}\r\n\r\n"
+    ).encode() + image_bytes + f"\r\n--{boundary}--\r\n".encode()
+    try:
+        response = urlopen(Request(
+            "https://api.imgbb.com/1/upload",
+            data=body,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+            method="POST",
+        ), timeout=15)
+        payload = json.loads(response.read().decode("utf-8"))
+        return payload.get("data", {}).get("url") or payload.get("data", {}).get("display_url")
+    except (HTTPError, URLError, ValueError, OSError):
+        return None
+
+
+def recipe_form_data(form: Any) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    picture = clean_text(form.get("picture"))
+    uploaded = upload_ibb_image(request.files.get("picture_file"))
+    if uploaded:
+        picture = uploaded
+    ingredients = []
+    for raw_id in form.getlist("ingredient_row_ids"):
+        name = clean_text(form.get(f"ingredient_name_{raw_id}"))
+        raw_quantity = clean_text(form.get(f"ingredient_quantity_{raw_id}"))
+        normalized_quantity = raw_quantity.casefold().replace(" ", "")
+        quantity_is_qb = normalized_quantity in {"qb", "q.b", "q.b."}
+        quantity = 0 if quantity_is_qb else parse_optional_quantity(raw_quantity)
+        if not name and not raw_quantity:
+            continue
+        ingredients.append({
+            "name": name,
+            "quantity": quantity or 0,
+            "quantity_is_qb": quantity_is_qb,
+            "unit": clean_text(form.get(f"ingredient_unit_{raw_id}"), "pz"),
+            "item_prior_id": parse_optional_int(form.get(f"ingredient_prior_id_{raw_id}")),
+        })
+    return {
+        "name": clean_text(form.get("name")),
+        "servings": parse_optional_int(form.get("servings"), 2) or 2,
+        "picture": picture,
+        "notes": clean_text(form.get("notes")),
+    }, ingredients
+
+
+def validate_recipe_data(data: dict[str, Any], ingredients: list[dict[str, Any]]) -> list[str]:
+    errors = []
+    if not data["name"]:
+        errors.append("Il nome della ricetta è obbligatorio.")
+    if int(data.get("servings") or 0) <= 0:
+        errors.append("Il numero di persone della ricetta deve essere maggiore di zero.")
+    if not ingredients:
+        errors.append("Inserisci almeno un ingrediente.")
+    for ingredient in ingredients:
+        if not ingredient["name"]:
+            errors.append("Ogni ingrediente deve avere un nome.")
+        if not ingredient.get("quantity_is_qb") and ingredient["quantity"] <= 0:
+            errors.append("Le quantità degli ingredienti devono essere maggiori di zero.")
+    return errors
+
+
+def create_recipe(data: dict[str, Any], ingredients: list[dict[str, Any]]) -> int:
+    supabase = get_supabase()
+    response = supabase.table("recipes").insert({
+        "name": data["name"], "servings": data["servings"], "picture": data.get("picture") or "", "notes": data.get("notes") or "",
+        "updated_at": utc_now(),
+    }).execute()
+    recipe_id = int(response.data[0]["id"])
+    save_recipe_ingredients(recipe_id, ingredients)
+    return recipe_id
+
+
+def save_recipe_ingredients(recipe_id: int, ingredients: list[dict[str, Any]]) -> None:
+    supabase = get_supabase()
+    rows = []
+    for order, ingredient in enumerate(ingredients):
+        prior_id = ensure_item_prior({
+            "name": ingredient["name"], "category": "Altro", "typical_quantity": ingredient["quantity"],
+            "typical_unit": ingredient["unit"], "default_location": "dispensa", "picture": "", "prior_notes": "",
+        }, existing_prior_id=ingredient.get("item_prior_id"), fetch_picture=False, update_existing=False)
+        rows.append({"recipe_id": recipe_id, "item_prior_id": prior_id, "quantity": ingredient["quantity"], "quantity_is_qb": bool(ingredient.get("quantity_is_qb")), "unit": ingredient["unit"], "sort_order": order})
+    if rows:
+        supabase.table("recipe_ingredients").insert(rows).execute()
+
+
+def update_recipe(recipe_id: int, data: dict[str, Any], ingredients: list[dict[str, Any]]) -> None:
+    supabase = get_supabase()
+    supabase.table("recipes").update({
+        "name": data["name"], "servings": data["servings"], "picture": data.get("picture") or "", "notes": data.get("notes") or "", "updated_at": utc_now(),
+    }).eq("id", recipe_id).execute()
+    supabase.table("recipe_ingredients").delete().eq("recipe_id", recipe_id).execute()
+    save_recipe_ingredients(recipe_id, ingredients)
+
+
+def list_recipes(query: str = "") -> list[dict[str, Any]]:
+    rows = get_supabase().table("recipes").select("*").execute().data or []
+    if query:
+        needle = query.casefold()
+        rows = [row for row in rows if needle in (row.get("name") or "").casefold()]
+    history = get_supabase().table("recipe_history").select("recipe_id,cooked_on").order("cooked_on", desc=True).execute().data or []
+    history_map: dict[int, list[str]] = {}
+    for row in history:
+        history_map.setdefault(int(row["recipe_id"]), []).append(row["cooked_on"])
+    for row in rows:
+        row["history"] = history_map.get(int(row["id"]), [])
+    return sorted(rows, key=lambda row: (row.get("name") or "").casefold())
+
+
+def get_recipe(recipe_id: int) -> dict[str, Any] | None:
+    response = get_supabase().table("recipes").select("*").eq("id", recipe_id).limit(1).execute()
+    if not response.data:
+        return None
+    recipe = response.data[0]
+    rows = get_supabase().table("recipe_ingredients").select("*").eq("recipe_id", recipe_id).order("sort_order").execute().data or []
+    priors = load_item_prior_map([int(row["item_prior_id"]) for row in rows])
+    recipe["ingredients"] = [row | {"name": priors.get(int(row["item_prior_id"]), {}).get("name", "Ingrediente"), "picture": priors.get(int(row["item_prior_id"]), {}).get("picture"), "default_location": priors.get(int(row["item_prior_id"]), {}).get("default_location", "dispensa")} for row in rows]
+    recipe["history"] = [row["cooked_on"] for row in (get_supabase().table("recipe_history").select("cooked_on").eq("recipe_id", recipe_id).order("cooked_on", desc=True).execute().data or [])]
+    return recipe
+
+
+def create_meal(data: dict[str, Any]) -> int:
+    supabase = get_supabase()
+    response = supabase.table("meals").insert({"name": data["name"], "meal_date": data["meal_date"], "meal_type": data["meal_type"], "people_count": data["people_count"], "updated_at": utc_now()}).execute()
+    meal_id = int(response.data[0]["id"])
+    supabase.table("meal_recipes").insert([{"meal_id": meal_id, "recipe_id": recipe_id, "sort_order": order} for order, recipe_id in enumerate(data["recipe_ids"])]).execute()
+    return meal_id
+
+
+def delete_meal_record(meal_id: int) -> None:
+    supabase = get_supabase()
+    # Delete links explicitly so this also works if the schema predates ON DELETE CASCADE.
+    supabase.table("meal_recipes").delete().eq("meal_id", meal_id).execute()
+    supabase.table("meals").delete().eq("id", meal_id).execute()
+
+
+def get_meal_recipe_links(meal_id: int) -> list[dict[str, Any]]:
+    return get_supabase().table("meal_recipes").select("id,recipe_id,sort_order").eq("meal_id", meal_id).order("sort_order").execute().data or []
+
+
+def add_recipe_to_meal(meal_id: int, recipe_id: int) -> bool:
+    links = get_meal_recipe_links(meal_id)
+    if any(int(link["recipe_id"]) == recipe_id for link in links):
+        return False
+    next_order = max((int(link.get("sort_order") or 0) for link in links), default=-1) + 1
+    get_supabase().table("meal_recipes").insert({"meal_id": meal_id, "recipe_id": recipe_id, "sort_order": next_order}).execute()
+    return True
+
+
+def reorder_meal_recipes(meal_id: int) -> None:
+    supabase = get_supabase()
+    for sort_order, link in enumerate(get_meal_recipe_links(meal_id)):
+        supabase.table("meal_recipes").update({"sort_order": sort_order}).eq("id", link["id"]).execute()
+
+
+def list_meals() -> list[dict[str, Any]]:
+    meals = get_supabase().table("meals").select("*").gte("meal_date", date.today().isoformat()).order("meal_date").order("meal_type").execute().data or []
+    recipe_links = get_supabase().table("meal_recipes").select("meal_id,recipe_id").execute().data or []
+    recipes_map = {int(row["id"]): row for row in (get_supabase().table("recipes").select("id,name,picture").execute().data or [])}
+    links: dict[int, list[dict[str, Any]]] = {}
+    for link in recipe_links:
+        links.setdefault(int(link["meal_id"]), []).append(recipes_map.get(int(link["recipe_id"]), {}))
+    for meal in meals:
+        meal["meal_type_label"] = MEAL_TYPES.get(meal["meal_type"], meal["meal_type"])
+        meal["recipes"] = links.get(int(meal["id"]), [])
+    return meals
+
+
+def get_meal(meal_id: int) -> dict[str, Any] | None:
+    response = get_supabase().table("meals").select("*").eq("id", meal_id).limit(1).execute()
+    if not response.data:
+        return None
+    meal = response.data[0]
+    recipe_ids = [int(row["recipe_id"]) for row in (get_supabase().table("meal_recipes").select("recipe_id").eq("meal_id", meal_id).order("sort_order").execute().data or [])]
+    meal["recipes"] = [get_recipe(recipe_id) for recipe_id in recipe_ids]
+    meal["meal_type_label"] = MEAL_TYPES.get(meal["meal_type"], meal["meal_type"])
+    return meal
+
+
+def unit_factor(unit: str) -> tuple[str, float]:
+    normalized = clean_text(unit, "pz").casefold()
+    if normalized == "kg":
+        return "g", 1000.0
+    if normalized == "l":
+        return "ml", 1000.0
+    return normalized, 1.0
+
+
+def aggregate_meal_ingredients(meal: dict[str, Any]) -> list[dict[str, Any]]:
+    aggregated: dict[int, dict[str, Any]] = {}
+    for recipe in meal.get("recipes", []):
+        if not recipe:
+            continue
+        scale = float(meal["people_count"]) / float(recipe["servings"] or 2)
+        for ingredient in recipe["ingredients"]:
+            prior_id = int(ingredient["item_prior_id"])
+            base_unit, factor = unit_factor(ingredient["unit"])
+            row = aggregated.setdefault(prior_id, {"item_prior_id": prior_id, "name": ingredient["name"], "required": 0.0, "quantity_is_qb": False, "always_available": normalize_match_text(ingredient["name"]) == "acqua", "unit": base_unit, "default_location": ingredient.get("default_location") or "dispensa", "recipes": []})
+            if ingredient.get("quantity_is_qb"):
+                row["quantity_is_qb"] = True
+            elif row["unit"] == base_unit:
+                row["required"] += float(ingredient["quantity"]) * scale * factor
+            row["recipes"].append(recipe["name"])
+    supabase = get_supabase()
+    inventory = supabase.table("inventory_items").select("item_prior_id,quantity,unit").execute().data or []
+    shopping = supabase.table("shopping_items").select("item_prior_id,quantity,unit").execute().data or []
+
+    def stock_by_prior(rows: list[dict[str, Any]]) -> dict[int, dict[str, float]]:
+        stock: dict[int, dict[str, float]] = {}
+        for item in rows:
+            base_unit, factor = unit_factor(item["unit"])
+            prior_stock = stock.setdefault(int(item["item_prior_id"]), {})
+            prior_stock[base_unit] = prior_stock.get(base_unit, 0.0) + float(item["quantity"] or 0) * factor
+        return stock
+
+    inventory_stock = stock_by_prior(inventory)
+    shopping_stock = stock_by_prior(shopping)
+    inventory_presence = {
+        int(item["item_prior_id"])
+        for item in inventory
+        if float(item.get("quantity") or 0) > 0
+    }
+    for row in aggregated.values():
+        unit = row["unit"]
+        inventory_have = inventory_stock.get(row["item_prior_id"], {}).get(unit, 0.0)
+        shopping_have = shopping_stock.get(row["item_prior_id"], {}).get(unit, 0.0)
+        if row["always_available"]:
+            row["available"] = row["required"]
+            row["inventory_available"] = row["required"]
+            row["shopping_available"] = 0
+            row["shopping_used"] = 0
+            row["shortage"] = 0
+            row["status"] = "ok"
+            continue
+        if row["quantity_is_qb"]:
+            row["available"] = 1 if row["item_prior_id"] in inventory_presence else 0
+            row["inventory_available"] = row["available"]
+            row["shopping_available"] = 0
+            row["shopping_used"] = 0
+            row["shortage"] = 0
+            row["status"] = "ok" if row["item_prior_id"] in inventory_presence else "missing"
+            continue
+        have = inventory_have + shopping_have
+        shopping_used = max(min(row["required"] - inventory_have, shopping_have), 0.0)
+        row["available"] = have
+        row["inventory_available"] = inventory_have
+        row["shopping_available"] = shopping_have
+        row["shopping_used"] = shopping_used
+        row["shortage"] = max(row["required"] - have, 0.0)
+        row["status"] = "ok" if have >= row["required"] else ("partial" if have > 0 else "missing")
+    return sorted(aggregated.values(), key=lambda row: row["name"].casefold())
 
 
 def fallback_ingredient_profile(name: str) -> dict[str, Any]:

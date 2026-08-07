@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Ricettario - Kitchen Planner{% endblock %}
+{% block content %}
+<section class="toolbar"><div><p class="eyebrow">Impostazioni</p><h2>Ricettario</h2></div><a class="button" href="{{ url_for('new_recipe') }}"><i class="fa-solid fa-plus"></i> Nuova ricetta</a></section>
+<form class="search-form" method="get"><input type="search" name="q" value="{{ query }}" placeholder="Cerca una ricetta..." aria-label="Cerca ricette"><button class="button secondary" type="submit"><i class="fa-solid fa-magnifying-glass"></i> Cerca</button></form>
+<section class="list-panel">{% if recipes %}<div class="recipe-grid">{% for recipe in recipes %}<a class="recipe-card" href="{{ url_for('recipe_detail', recipe_id=recipe.id) }}">{% if recipe.picture %}<img src="{{ recipe.picture }}" alt="{{ recipe.name }}">{% else %}<div class="recipe-placeholder"><i class="fa-solid fa-utensils"></i></div>{% endif %}<div><h3>{{ recipe.name }}</h3><p>{{ recipe.servings }} persone · {{ recipe.history|length }} preparazioni</p>{% if recipe.history %}<small>Ultima: {{ recipe.history[0]|date_it }}</small>{% endif %}</div></a>{% endfor %}</div>{% else %}<div class="empty-state"><h3>Nessuna ricetta trovata</h3><a class="button" href="{{ url_for('new_recipe') }}">Crea ricetta</a></div>{% endif %}</section>
+{% endblock %}

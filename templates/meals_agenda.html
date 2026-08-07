@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Agenda pasti - Kitchen Planner{% endblock %}
+{% block content %}
+<section class="toolbar"><div><p class="eyebrow">Pianificazione</p><h2>Agenda pasti</h2></div><a class="button" href="{{ url_for('new_meal') }}"><i class="fa-solid fa-plus"></i> Nuovo pasto</a></section>
+<section class="list-panel">
+  {% if meals %}<div class="item-list">{% for meal in meals %}
+    <article class="meal-row">
+      <a class="meal-row-link" href="{{ url_for('meal_detail', meal_id=meal.id) }}">
+      <div class="meal-date"><strong>{{ meal.meal_date|date_it }}</strong><span>{{ meal.meal_type_label }}</span></div>
+      <div><h3>{{ meal.name }}</h3><p>{{ meal.people_count }} persone · {{ meal.recipes|length }} piatti{% if meal.recipes %}: {% for recipe in meal.recipes %}{{ recipe.name }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</p></div>
+      <i class="fa-solid fa-chevron-right" aria-hidden="true"></i>
+      </a>
+      <form method="post" action="{{ url_for('delete_meal', meal_id=meal.id) }}" onsubmit="return confirm('Eliminare questo pasto dall’agenda?');">
+        <button class="small-button danger" type="submit" aria-label="Elimina {{ meal.name }}"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>
+      </form>
+    </article>
+  {% endfor %}</div>{% else %}<div class="empty-state"><h3>Nessun pasto in agenda</h3><p>Aggiungi il prossimo pranzo, cena o colazione.</p><a class="button" href="{{ url_for('new_meal') }}">Aggiungi un pasto</a></div>{% endif %}
+</section>
+{% endblock %}

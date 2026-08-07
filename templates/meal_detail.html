@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}{{ meal.name }} - Kitchen Planner{% endblock %}
+{% block content %}
+<section class="toolbar"><div><p class="eyebrow">{{ meal.meal_date|date_it }} · {{ meal.meal_type_label }} · {{ meal.people_count }} persone</p><h2>{{ meal.name }}</h2></div><div class="actions"><form method="post" action="{{ url_for('complete_meal', meal_id=meal.id) }}"><button class="button secondary" type="submit"><i class="fa-solid fa-check"></i> Segna preparato</button></form><a class="button secondary" href="{{ url_for('meals_agenda') }}">Agenda</a></div></section>
+<section class="meal-recipes">
+  <div class="section-heading"><h3>Piatti</h3></div>
+  {% if meal.recipes %}
+    <div class="meal-recipe-list">
+      {% for recipe in meal.recipes %}
+        <div class="meal-recipe-entry">
+          <a class="recipe-chip" href="{{ url_for('recipe_detail', recipe_id=recipe.id) }}">
+            {% if recipe.picture %}<img src="{{ recipe.picture }}" alt="">{% endif %}
+            <span>{{ recipe.name }}</span><i class="fa-solid fa-arrow-up-right-from-square"></i>
+          </a>
+          <div class="meal-recipe-actions" aria-label="Ordina o rimuovi {{ recipe.name }}">
+            <form method="post" action="{{ url_for('move_meal_recipe', meal_id=meal.id, recipe_id=recipe.id, direction='up') }}">
+              <button class="small-button secondary icon-only" type="submit" {% if loop.first %}disabled{% endif %} aria-label="Sposta {{ recipe.name }} sopra"><i class="fa-solid fa-chevron-up" aria-hidden="true"></i></button>
+            </form>
+            <form method="post" action="{{ url_for('move_meal_recipe', meal_id=meal.id, recipe_id=recipe.id, direction='down') }}">
+              <button class="small-button secondary icon-only" type="submit" {% if loop.last %}disabled{% endif %} aria-label="Sposta {{ recipe.name }} sotto"><i class="fa-solid fa-chevron-down" aria-hidden="true"></i></button>
+            </form>
+            <form method="post" action="{{ url_for('remove_meal_recipe', meal_id=meal.id, recipe_id=recipe.id) }}" onsubmit="return confirm('Rimuovere questo piatto dal meal?');">
+              <button class="small-button danger icon-only" type="submit" aria-label="Rimuovi {{ recipe.name }}"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>
+            </form>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <p class="field-help">Nessun piatto associato.</p>
+  {% endif %}
+  <div class="meal-recipe-picker" data-meal-recipe-picker data-existing-recipe-names="{{ existing_recipe_names|tojson|forceescape }}">
+    <label class="meal-recipe-search-label" for="meal-recipe-search">Cerca un piatto da aggiungere</label>
+    <input id="meal-recipe-search" class="meal-recipe-search" type="text" placeholder="Scrivi il nome del piatto..." autocomplete="off" data-meal-recipe-search>
+    <div class="meal-recipe-results" data-meal-recipe-results>
+      {% for recipe in available_recipes %}
+        <form class="meal-recipe-result" data-recipe-name="{{ recipe.name|lower }}" method="post" action="{{ url_for('add_meal_recipe', meal_id=meal.id) }}">
+          <span>{{ recipe.name }}</span>
+          <input type="hidden" name="recipe_id" value="{{ recipe.id }}">
+          <button class="small-button" type="submit"><i class="fa-solid fa-plus" aria-hidden="true"></i> Aggiungi</button>
+        </form>
+      {% endfor %}
+    </div>
+    <div class="meal-recipe-no-results" data-meal-recipe-no-results hidden>
+      <span data-meal-recipe-no-results-text>Nessun piatto trovato.</span>
+      <a class="small-button" href="{{ url_for('new_recipe', meal_id=meal.id) }}" data-new-recipe-link><i class="fa-solid fa-plus" aria-hidden="true"></i> Aggiungi nuovo</a>
+    </div>
+  </div>
+</section>
+<section class="list-panel ingredient-panel"><div class="section-heading"><div><p class="eyebrow">Dispensa</p><h3>Ingredienti aggregati</h3><p class="field-help">Il simbolo della spesa indica le quantità già presenti nella lista della spesa: vengono conteggiate insieme a quelle disponibili in casa.</p></div><p class="field-help">Le quantità sono ricalcolate per {{ meal.people_count }} persone.</p></div>
+{% if ingredients %}<div class="item-list">{% for item in ingredients %}<article class="ingredient-row status-{{ item.status }}"><div class="ingredient-status"><span class="status-icon">{% if item.status == 'ok' %}<i class="fa-solid fa-check"></i>{% elif item.status == 'partial' %}<i class="fa-solid fa-check"></i>{% else %}<i class="fa-solid fa-xmark"></i>{% endif %}</span></div><div><h3>{{ item.name }}{% if item.shopping_used > 0 %} <i class="fa-solid fa-cart-shopping ingredient-shopping" title="Coperto anche dalla lista della spesa" aria-label="Coperto anche dalla lista della spesa"></i>{% endif %}</h3><p>Necessari <strong>{% if item.quantity_is_qb %}q.b.{% else %}{{ item.required|qty }} {{ item.unit }}{% endif %}</strong> · {% if item.always_available %}Sempre disponibile{% elif item.quantity_is_qb %}{% if item.status == 'ok' %}Presente nell'inventario{% else %}Non presente nell'inventario{% endif %}{% else %}Disponibili {{ item.available|qty }} {{ item.unit }}{% endif %}</p></div>{% if item.quantity_is_qb %}<span class="badge {% if item.status != 'ok' %}danger{% endif %}">{% if item.status == 'ok' %}Disponibile{% else %}Manca{% endif %}</span>{% elif item.shortage > 0 %}<form method="post" action="{{ url_for('meal_add_to_shopping', meal_id=meal.id, prior_id=item.item_prior_id) }}"><button class="small-button" type="submit"><i class="fa-solid fa-cart-plus"></i> Aggiungi {{ item.shortage|qty }} {{ item.unit }}</button></form>{% elif item.shopping_used > 0 %}<span class="badge warning">Nella lista</span>{% else %}<span class="badge">Disponibile</span>{% endif %}</article>{% endfor %}</div>{% else %}<div class="empty-state"><h3>Nessun ingrediente</h3></div>{% endif %}
+</section>
+{% endblock %}
+{% block page_scripts %}
+<script>
+(() => {
+  const picker = document.querySelector('[data-meal-recipe-picker]');
+  if (!picker) return;
+  const search = picker.querySelector('[data-meal-recipe-search]');
+  const results = Array.from(picker.querySelectorAll('[data-recipe-name]'));
+  const noResults = picker.querySelector('[data-meal-recipe-no-results]');
+  const noResultsText = picker.querySelector('[data-meal-recipe-no-results-text]');
+  const newRecipeLink = picker.querySelector('[data-new-recipe-link]');
+  const existingNames = JSON.parse(picker.dataset.existingRecipeNames || '[]').map(name => name.toLocaleLowerCase());
+
+  function updateResults() {
+    const query = search.value.trim().toLocaleLowerCase();
+    const visibleResults = results.filter(result => {
+      const visible = !query || result.dataset.recipeName.includes(query);
+      result.hidden = !visible;
+      return visible;
+    });
+    const existingMatch = query && existingNames.some(name => name.includes(query));
+    const showNew = query && !visibleResults.length && !existingMatch;
+    const showAlreadyAdded = query && !visibleResults.length && existingMatch;
+    noResults.hidden = !showNew && !showAlreadyAdded;
+    if (noResultsText) noResultsText.textContent = showAlreadyAdded ? 'Questo piatto è già associato a questo meal.' : 'Nessun piatto trovato.';
+    if (newRecipeLink) newRecipeLink.hidden = !showNew;
+    if (newRecipeLink && showNew) {
+      const url = new URL(newRecipeLink.href, window.location.href);
+      url.searchParams.set('name', search.value.trim());
+      newRecipeLink.href = url.toString();
+    }
+  }
+
+  search.addEventListener('input', updateResults);
+  updateResults();
+})();
+</script>
+{% endblock %}

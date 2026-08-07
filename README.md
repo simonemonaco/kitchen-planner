@@ -19,6 +19,9 @@ Webapp Flask per gestire i prodotti disponibili in frigo e dispensa, con scadenz
 - Tabella `items_history` con timestamp, costo opzionale, quantita', unita' e destinazione dell'acquisto.
 - Riepilogo con prodotti totali, prior prodotto, prodotti in frigo, in dispensa, scaduti, in scadenza e da comprare.
 - Sezione `Impostazioni` per vedere e modificare il database dei prodotti prior.
+- Agenda pasti (`/meals`) con pasti nominabili, data, momento, persone e piatti collegati.
+- Ricettario (`/settings/recipes`) ricercabile, ricette con ingredienti/quantità, foto via link o upload ImgBB e storico delle preparazioni.
+- Dettaglio pasto con quantità scalate, aggregazione degli ingredienti, stato della dispensa e collegamento diretto alla lista della spesa.
 - Categoria prior vincolata a: Carne, Pesce, Uova, Latticini, Formaggi, Cereali, Legumi, Pasta, Verdura, Frutta, Dolci, Altro.
 
 ## Database
@@ -33,6 +36,8 @@ Tabelle richieste:
 - `items_history`: acquisti registrati quando una voce della lista spesa viene indicata come acquistata.
 
 In Supabase SQL Editor esegui lo script `scripts/supabase_schema.sql`.
+
+Per abilitare la parte pasti esegui anche `scripts/meals_schema.sql` dopo lo schema principale.
 
 Nota: lo script crea anche policy RLS permissive per `anon` e `authenticated` per ambiente locale/dev.
 
@@ -95,6 +100,9 @@ RUN_STARTUP_TASKS=true
 # Se non impostato il fallback è silenzioso
 GEMINI_API_KEY=AIza...
 GEMINI_MODEL=gemini-2.5-flash  # opzionale, default gemini-2.5-flash
+
+# Upload immagini ricette su i.ibb.co (ImgBB)
+IMGBB_API_KEY=...
 ```
 
 Apri `http://127.0.0.1:5000`.

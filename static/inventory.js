@@ -1,8 +1,14 @@
 (() => {
   const SORT_KEY = "kitchen-planner.inventory.sort";
+  const POSITION_KEY = "kitchen-planner.inventory.position";
 
   const container = document.querySelector("[data-inventory-container]");
   if (!container) return;
+
+  const listPanel = container.closest("[data-inventory-location]");
+  const context = listPanel
+    ? `${listPanel.dataset.inventoryLocation || "all"}:${listPanel.dataset.inventoryView || "grid"}`
+    : "all:grid";
 
   const sortSelect = document.querySelector("[data-inventory-sort-select]");
   const searchInput = document.querySelector("[data-inventory-search]");
@@ -118,8 +124,28 @@
     searchInput.addEventListener("input", () => applyFilter(searchInput.value));
   }
 
+  // Finishing or deleting reloads the page. Keep the viewport at the same
+  // point in the current section instead of jumping back to the top.
+  document.querySelectorAll("[data-inventory-navigation]").forEach((form) => {
+    form.addEventListener("submit", () => {
+      window.sessionStorage.setItem(
+        `${POSITION_KEY}:${context}`,
+        String(window.scrollY),
+      );
+    });
+  });
+
   // ── Init ──────────────────────────────────────────────────────────────────
 
   const savedSort = window.localStorage.getItem(SORT_KEY) || "expiry";
   applySort(savedSort);
+
+  const savedPosition = window.sessionStorage.getItem(`${POSITION_KEY}:${context}`);
+  if (savedPosition !== null) {
+    window.sessionStorage.removeItem(`${POSITION_KEY}:${context}`);
+    const position = Number.parseInt(savedPosition, 10);
+    if (Number.isFinite(position)) {
+      window.requestAnimationFrame(() => window.scrollTo(0, position));
+    }
+  }
 })();

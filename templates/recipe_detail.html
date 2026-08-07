@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}{{ recipe.name }} - Kitchen Planner{% endblock %}
+{% block content %}
+<section class="toolbar"><div><p class="eyebrow">Ricettario · {{ recipe.servings }} persone</p><h2>{{ recipe.name }}</h2></div><div class="actions"><a class="button secondary" href="{{ url_for('recipes') }}">Ricettario</a><a class="button" href="{{ url_for('edit_recipe', recipe_id=recipe.id) }}"><i class="fa-solid fa-pen"></i> Modifica</a></div></section>
+<div class="two-column">
+  <section class="form-panel">
+    {% if recipe.picture %}<img class="recipe-hero" src="{{ recipe.picture }}" alt="{{ recipe.name }}">{% endif %}
+    <h3>Ingredienti</h3>
+    <div class="item-list">
+      {% for ingredient in recipe.ingredients %}
+        <div class="ingredient-simple">
+          <span class="ingredient-info">{% if ingredient.picture %}<img class="ingredient-icon" src="{{ ingredient.picture }}" alt="">{% else %}<span class="ingredient-icon ingredient-icon-placeholder" aria-hidden="true">{{ ingredient.name[:1] }}</span>{% endif %}<span>{{ ingredient.name }}</span></span>
+          <strong>{% if ingredient.quantity_is_qb %}q.b.{% else %}{{ ingredient.quantity|qty }} {{ ingredient.unit }}{% endif %}</strong>
+        </div>
+      {% endfor %}
+    </div>
+    <div class="recipe-history">
+      <h3>Storico preparazioni</h3>
+      {% if recipe.history %}<div class="history-dates">{% for day in recipe.history %}<span class="badge">{{ day|date_it }}</span>{% endfor %}</div>{% else %}<p class="field-help">La ricetta comparirà qui quando verrà aggiunta a un pasto.</p>{% endif %}
+    </div>
+  </section>
+  <section class="form-panel">
+    {% if recipe.notes %}<div class="recipe-notes"><h3>Note</h3>{{ recipe.notes|markdown }}</div>{% else %}<p class="field-help">Nessuna nota per questa ricetta.</p>{% endif %}
+  </section>
+</div>
+{% endblock %}
