@@ -2,7 +2,7 @@
 
 Webapp Flask per gestire i prodotti disponibili in frigo e dispensa, con scadenza precisa oppure stimata, e una lista della spesa collegata all'inventario.
 
-> **New**: Gestione Pasti e Ricette
+> **New**: Gestione Pasti e Ricette!
 
 ## Funzioni
 
