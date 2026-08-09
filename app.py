@@ -458,15 +458,30 @@ def register_routes(app: Flask) -> None:
             flash("Prodotto non trovato.", "error")
             return redirect(url_for("index"))
 
-        add_or_increment_shopping_item(
-            item_prior_id=item["item_prior_id"],
-            quantity=max(float(item["quantity"] or 1), 1),
-            unit=item["unit"],
-            target_location=item["location"],
-            notes=item["notes"],
-        )
+        # If another instance of the same prior is still available, the product
+        # is not finished from the household's point of view: do not replenish it.
+        other_inventory = (
+            get_supabase().table("inventory_items")
+            .select("id")
+            .eq("item_prior_id", item["item_prior_id"])
+            .neq("id", item_id)
+            .gt("quantity", 0)
+            .limit(1)
+            .execute()
+        ).data
+        if not other_inventory:
+            add_or_increment_shopping_item(
+                item_prior_id=item["item_prior_id"],
+                quantity=max(float(item["quantity"] or 1), 1),
+                unit=item["unit"],
+                target_location=item["location"],
+                notes=item["notes"],
+            )
         delete_inventory_item(item_id)
-        flash("Prodotto finito: aggiunto alla lista della spesa.", "success")
+        flash(
+            "Prodotto finito: " + ("la lista della spesa è stata aggiornata." if not other_inventory else "non serve aggiungerlo alla lista della spesa."),
+            "success",
+        )
         return redirect_inventory_context()
 
     @app.post("/inventory/<int:item_id>/delete")
@@ -904,6 +919,7 @@ def register_routes(app: Flask) -> None:
             flash("Pasto non trovato.", "error")
             return redirect(url_for("meals_agenda"))
         supabase = get_supabase()
+        consume_meal_ingredients(meal)
         for recipe in meal.get("recipes", []):
             supabase.table("recipe_history").upsert({"recipe_id": recipe["id"], "cooked_on": meal["meal_date"]}, on_conflict="recipe_id,cooked_on").execute()
         flash("Pasto segnato come preparato: lo storico delle ricette è stato aggiornato.", "success")
@@ -2107,6 +2123,49 @@ def aggregate_meal_ingredients(meal: dict[str, Any]) -> list[dict[str, Any]]:
     return sorted(aggregated.values(), key=lambda row: row["name"].casefold())
 
 
+def consume_meal_ingredients(meal: dict[str, Any]) -> None:
+    """Consume available pantry stock, using the instances with nearest expiry first."""
+    ingredients = aggregate_meal_ingredients(meal)
+    supabase = get_supabase()
+    for ingredient in ingredients:
+        if ingredient["quantity_is_qb"] or ingredient["always_available"] or ingredient["required"] <= 0:
+            continue
+
+        needed_base = float(ingredient["required"])
+        rows = (
+            supabase.table("inventory_items")
+            .select("*")
+            .eq("item_prior_id", ingredient["item_prior_id"])
+            .gt("quantity", 0)
+            .execute()
+            .data
+            or []
+        )
+        base_unit = ingredient["unit"]
+        compatible = []
+        for row in rows:
+            row_unit, row_factor = unit_factor(row["unit"])
+            if row_unit == base_unit:
+                compatible.append((row, row_factor))
+        compatible.sort(key=lambda pair: (parse_iso_date(pair[0].get("expiry_date")) is None, pair[0].get("expiry_date") or "9999-12-31", pair[0].get("id", 0)))
+
+        for row, row_factor in compatible:
+            if needed_base <= 0:
+                break
+            available_base = float(row["quantity"] or 0) * row_factor
+            consumed_base = min(available_base, needed_base)
+            remaining_base = available_base - consumed_base
+            if remaining_base <= 0:
+                delete_inventory_item(int(row["id"]))
+            else:
+                update_inventory_item(
+                    int(row["id"]),
+                    int(row["item_prior_id"]),
+                    row | {"quantity": remaining_base / row_factor, "unit": row["unit"]},
+                )
+            needed_base -= consumed_base
+
+
 def fallback_ingredient_profile(name: str) -> dict[str, Any]:
     """Return a resilient default profile when AI/external enrichment is unavailable."""
     normalized = normalize_match_text(name)
@@ -2427,7 +2486,25 @@ def get_inventory_item(item_id: int) -> dict[str, Any] | None:
     return merge_item_with_prior(item, prior)
 
 
-def create_inventory_item(item_prior_id: int, data: dict[str, Any]) -> int:
+def create_inventory_item(
+    item_prior_id: int,
+    data: dict[str, Any],
+    *,
+    merge_similar: bool = False,
+) -> int:
+    if merge_similar:
+        existing = find_similar_inventory_item(item_prior_id, data.get("expiry_date"))
+        if existing:
+            existing_unit, existing_factor = unit_factor(existing["unit"])
+            incoming_unit, incoming_factor = unit_factor(data["unit"])
+            if existing_unit == incoming_unit:
+                new_quantity = float(existing.get("quantity") or 0) + float(data["quantity"]) * incoming_factor / existing_factor
+                update_inventory_item(
+                    int(existing["id"]),
+                    item_prior_id,
+                    existing | {"quantity": new_quantity, "unit": existing["unit"]},
+                )
+                return int(existing["id"])
     payload = {
         "item_prior_id": item_prior_id,
         "quantity": data["quantity"],
@@ -2442,6 +2519,24 @@ def create_inventory_item(item_prior_id: int, data: dict[str, Any]) -> int:
     if not response.data:
         raise RuntimeError("Inserimento inventario non riuscito.")
     return int(response.data[0]["id"])
+
+
+def find_similar_inventory_item(item_prior_id: int, expiry_date: str | None) -> dict[str, Any] | None:
+    rows = get_supabase().table("inventory_items").select("*").eq("item_prior_id", item_prior_id).gt("quantity", 0).execute().data or []
+    target = parse_iso_date(expiry_date)
+    candidates = []
+    for row in rows:
+        current = parse_iso_date(row.get("expiry_date"))
+        if target is None or current is None:
+            if target != current:
+                continue
+            distance = 0
+        else:
+            distance = abs((current - target).days)
+            if distance > 5:
+                continue
+        candidates.append((distance, row))
+    return min(candidates, key=lambda value: (value[0], value[1].get("id", 0)))[1] if candidates else None
 
 
 def update_inventory_item(item_id: int, item_prior_id: int, data: dict[str, Any]) -> None:
@@ -2584,6 +2679,7 @@ def complete_shopping_purchase(
             "expiry_estimated": expiry_estimated,
             "notes": item["notes"] or "",
         },
+        merge_similar=True,
     )
     create_history_item(
         {
