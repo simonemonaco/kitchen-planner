@@ -39,9 +39,9 @@ LOCATIONS = {
 UNITS = ["pz", "g", "ml", "l", "kg"]
 
 CATEGORIES = [
-    "Latticini",
     "Verdura",
     "Frutta",
+    "Latticini",
     "Formaggi",
     "Carne",
     "Pesce",
@@ -50,6 +50,7 @@ CATEGORIES = [
     "Legumi",
     "Pasta",
     "Dolci",
+    "Bibite",
     "Altro",
 ]
 
@@ -136,6 +137,7 @@ REQUIRED_TABLES = [
     "meals",
     "meal_recipes",
     "recipe_history",
+    "meal_consumptions",
 ]
 
 MEAL_TYPES = {
@@ -469,7 +471,14 @@ def register_routes(app: Flask) -> None:
             .limit(1)
             .execute()
         ).data
-        if not other_inventory:
+        existing_shopping = (
+            get_supabase().table("shopping_items")
+            .select("id")
+            .eq("item_prior_id", item["item_prior_id"])
+            .limit(1)
+            .execute()
+        ).data
+        if not other_inventory and not existing_shopping:
             add_or_increment_shopping_item(
                 item_prior_id=item["item_prior_id"],
                 quantity=max(float(item["quantity"] or 1), 1),
@@ -479,7 +488,7 @@ def register_routes(app: Flask) -> None:
             )
         delete_inventory_item(item_id)
         flash(
-            "Prodotto finito: " + ("la lista della spesa è stata aggiornata." if not other_inventory else "non serve aggiungerlo alla lista della spesa."),
+            "Prodotto finito: " + ("la lista della spesa è stata aggiornata." if not other_inventory and not existing_shopping else "non serve aggiungerlo alla lista della spesa."),
             "success",
         )
         return redirect_inventory_context()
@@ -814,6 +823,10 @@ def register_routes(app: Flask) -> None:
         meals = list_meals()
         return render_template("meals_agenda.html", meals=meals)
 
+    @app.get("/meals/history")
+    def meals_history():
+        return render_template("meals_history.html", meals=list_meal_history())
+
     @app.route("/meals/new", methods=("GET", "POST"))
     def new_meal():
         if request.method == "POST":
@@ -918,12 +931,39 @@ def register_routes(app: Flask) -> None:
         if not meal:
             flash("Pasto non trovato.", "error")
             return redirect(url_for("meals_agenda"))
+        if meal.get("completed_at"):
+            flash("Questo pasto è già nello storico.", "error")
+            return redirect(url_for("meal_detail", meal_id=meal_id))
         supabase = get_supabase()
         consume_meal_ingredients(meal)
         for recipe in meal.get("recipes", []):
             supabase.table("recipe_history").upsert({"recipe_id": recipe["id"], "cooked_on": meal["meal_date"]}, on_conflict="recipe_id,cooked_on").execute()
-        flash("Pasto segnato come preparato: lo storico delle ricette è stato aggiornato.", "success")
-        return redirect(url_for("meal_detail", meal_id=meal_id))
+        supabase.table("meals").update({"completed_at": utc_now(), "updated_at": utc_now()}).eq("id", meal_id).execute()
+        flash("Pasto segnato come preparato e aggiunto allo storico.", "success")
+        return redirect(url_for("meals_history"))
+
+    @app.post("/meals/<int:meal_id>/undo")
+    def undo_meal(meal_id: int):
+        meal = get_meal(meal_id)
+        if not meal or not meal.get("completed_at"):
+            flash("Pasto non trovato nello storico.", "error")
+            return redirect(url_for("meals_history"))
+        action = clean_text(request.form.get("action")).lower()
+        new_date = clean_text(request.form.get("meal_date"))
+        if action == "reschedule" and not parse_iso_date(new_date):
+            flash("Inserisci una data valida per riprogrammare il pasto.", "error")
+            return redirect(url_for("meals_history"))
+        restore_meal_ingredients(meal)
+        supabase = get_supabase()
+        for recipe in meal.get("recipes", []):
+            supabase.table("recipe_history").delete().eq("recipe_id", recipe["id"]).eq("cooked_on", meal["meal_date"]).execute()
+        if action == "reschedule":
+            supabase.table("meals").update({"meal_date": new_date, "completed_at": None, "updated_at": utc_now()}).eq("id", meal_id).execute()
+            flash("Pasto annullato e riprogrammato.", "success")
+            return redirect(url_for("meals_agenda"))
+        delete_meal_record(meal_id)
+        flash("Pasto annullato e rimosso dallo storico.", "success")
+        return redirect(url_for("meals_history"))
 
     @app.post("/meals/<int:meal_id>/shopping/<int:prior_id>")
     def meal_add_to_shopping(meal_id: int, prior_id: int):
@@ -2026,7 +2066,20 @@ def reorder_meal_recipes(meal_id: int) -> None:
 
 
 def list_meals() -> list[dict[str, Any]]:
-    meals = get_supabase().table("meals").select("*").gte("meal_date", date.today().isoformat()).order("meal_date").order("meal_type").execute().data or []
+    meals = get_supabase().table("meals").select("*").gte("meal_date", date.today().isoformat()).is_("completed_at", "null").order("meal_date").order("meal_type").execute().data or []
+    recipe_links = get_supabase().table("meal_recipes").select("meal_id,recipe_id").execute().data or []
+    recipes_map = {int(row["id"]): row for row in (get_supabase().table("recipes").select("id,name,picture").execute().data or [])}
+    links: dict[int, list[dict[str, Any]]] = {}
+    for link in recipe_links:
+        links.setdefault(int(link["meal_id"]), []).append(recipes_map.get(int(link["recipe_id"]), {}))
+    for meal in meals:
+        meal["meal_type_label"] = MEAL_TYPES.get(meal["meal_type"], meal["meal_type"])
+        meal["recipes"] = links.get(int(meal["id"]), [])
+    return meals
+
+
+def list_meal_history() -> list[dict[str, Any]]:
+    meals = get_supabase().table("meals").select("*").not_.is_("completed_at", "null").order("completed_at", desc=True).execute().data or []
     recipe_links = get_supabase().table("meal_recipes").select("meal_id,recipe_id").execute().data or []
     recipes_map = {int(row["id"]): row for row in (get_supabase().table("recipes").select("id,name,picture").execute().data or [])}
     links: dict[int, list[dict[str, Any]]] = {}
@@ -2154,6 +2207,13 @@ def consume_meal_ingredients(meal: dict[str, Any]) -> None:
                 break
             available_base = float(row["quantity"] or 0) * row_factor
             consumed_base = min(available_base, needed_base)
+            supabase.table("meal_consumptions").insert({
+                "meal_id": meal["id"],
+                "inventory_item_id": row["id"],
+                "item_snapshot": row,
+                "consumed_quantity": consumed_base / row_factor,
+                "consumed_unit": row["unit"],
+            }).execute()
             remaining_base = available_base - consumed_base
             if remaining_base <= 0:
                 delete_inventory_item(int(row["id"]))
@@ -2164,6 +2224,28 @@ def consume_meal_ingredients(meal: dict[str, Any]) -> None:
                     row | {"quantity": remaining_base / row_factor, "unit": row["unit"]},
                 )
             needed_base -= consumed_base
+
+
+def restore_meal_ingredients(meal: dict[str, Any]) -> None:
+    """Restore the exact inventory quantities recorded when a meal was completed."""
+    supabase = get_supabase()
+    records = supabase.table("meal_consumptions").select("*").eq("meal_id", meal["id"]).order("id").execute().data or []
+    for record in records:
+        snapshot = record.get("item_snapshot") or {}
+        item_id = int(record["inventory_item_id"])
+        current = supabase.table("inventory_items").select("*").eq("id", item_id).limit(1).execute().data or []
+        if current:
+            row = current[0]
+            if row.get("unit") == record["consumed_unit"]:
+                quantity = float(row.get("quantity") or 0) + float(record["consumed_quantity"])
+                supabase.table("inventory_items").update({"quantity": quantity, "updated_at": utc_now()}).eq("id", item_id).execute()
+            else:
+                snapshot = {}
+        if not current or not snapshot:
+            payload = {key: snapshot[key] for key in ("item_prior_id", "quantity", "unit", "location", "expiry_date", "expiry_estimated", "notes") if key in snapshot}
+            if payload:
+                supabase.table("inventory_items").insert(payload).execute()
+    supabase.table("meal_consumptions").delete().eq("meal_id", meal["id"]).execute()
 
 
 def fallback_ingredient_profile(name: str) -> dict[str, Any]:

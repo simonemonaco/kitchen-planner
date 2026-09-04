@@ -1,5 +1,4 @@
 (() => {
-  const MODE_KEY = "kitchen-planner.shopping.mode";
   const SELECTION_KEY = "kitchen-planner.shopping.selection";
 
   const layout = document.querySelector("[data-shopping-layout]");
@@ -7,7 +6,6 @@
     return;
   }
 
-  const modeToggle = document.querySelector("[data-shopping-mode-toggle]");
   const checkboxes = Array.from(document.querySelectorAll("[data-shopping-select]"));
   const completeForm = document.querySelector("[data-shopping-complete-form]");
   const selectedInputsHost = document.querySelector("[data-shopping-selected-inputs]");
@@ -76,19 +74,6 @@
     updateSelectionUI();
   }
 
-  function applyMode(mode) {
-    const resolvedMode = mode === "spesa" ? "spesa" : "inserimento";
-    layout.classList.toggle("is-shopping-mode", resolvedMode === "spesa");
-    if (modeToggle) {
-      modeToggle.checked = resolvedMode === "spesa";
-    }
-    window.localStorage.setItem(MODE_KEY, resolvedMode);
-  }
-
-  if (modeToggle) {
-    modeToggle.addEventListener("change", () => applyMode(modeToggle.checked ? "spesa" : "inserimento"));
-  }
-
   checkboxes.forEach((checkbox) => {
     checkbox.addEventListener("change", () => {
       updateSelectionUI();
@@ -113,7 +98,6 @@
     });
   }
 
-  applyMode(window.localStorage.getItem(MODE_KEY) || "inserimento");
   applyStoredSelection();
   updateCardSelection();
 })();

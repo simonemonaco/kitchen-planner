@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Storico pasti - Kitchen Planner{% endblock %}
+{% block content %}
+<section class="toolbar"><div><p class="eyebrow">Pianificazione</p><h2>Storico pasti</h2></div><a class="button secondary" href="{{ url_for('meals_agenda') }}">Agenda pasti</a></section>
+<section class="list-panel">
+  {% if meals %}<div class="item-list">{% for meal in meals %}
+    <article class="meal-row history-meal-row">
+      <div class="meal-date"><strong>{{ meal.meal_date|date_it }}</strong><span>{{ meal.meal_type_label }}</span></div>
+      <div><h3>{{ meal.name }}</h3><p>{{ meal.people_count }} persone · {{ meal.recipes|length }} piatti{% if meal.recipes %}: {% for recipe in meal.recipes %}{{ recipe.name }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</p><p class="field-help">Preparato il {{ meal.completed_at|datetime_it }}</p></div>
+      <button class="small-button secondary" type="button" data-undo-meal data-meal-id="{{ meal.id }}" data-meal-name="{{ meal.name }}" data-meal-date="{{ meal.meal_date }}"><i class="fa-solid fa-rotate-left" aria-hidden="true"></i> Annulla</button>
+    </article>
+  {% endfor %}</div>{% else %}<div class="empty-state"><h3>Nessun pasto nello storico</h3><p>I pasti segnati come preparati appariranno qui.</p></div>{% endif %}
+</section>
+<dialog class="meal-undo-dialog" data-meal-undo-dialog>
+  <form method="post" data-meal-undo-form>
+    <h3>Annulla pasto</h3><p data-meal-undo-description></p>
+    <label>Nuova data per riprogrammare<input type="date" name="meal_date" data-meal-undo-date></label>
+    <div class="form-actions"><button class="button secondary" type="button" data-meal-undo-cancel>Chiudi</button><button class="button secondary" type="submit" name="action" value="reschedule">Riprogramma</button><button class="button danger" type="submit" name="action" value="delete">Cancella pasto</button></div>
+  </form>
+</dialog>
+{% endblock %}
+{% block page_scripts %}<script src="{{ url_for('static', filename='meal_history.js') }}" defer></script>{% endblock %}
