@@ -199,6 +199,38 @@ button {
   font-size: clamp(1.7rem, 3vw, 2.4rem);
 }
 
+.servings-controls {
+  display: inline-flex;
+  gap: 8px;
+  margin-left: 10px;
+  align-items: center;
+}
+
+.servings-btn {
+  background: var(--brand);
+  color: #ffffff;
+  border: 0;
+  border-radius: 6px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 1.2rem;
+  cursor: pointer;
+  transition: background 150ms ease, transform 150ms ease;
+}
+
+.servings-btn:hover {
+  background: var(--brand-dark);
+  transform: translateY(-1px);
+}
+
+.servings-btn:active {
+  transform: translateY(0);
+}
+
 .messages {
   display: grid;
   gap: 8px;

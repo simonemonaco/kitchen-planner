@@ -1,16 +1,16 @@
 {% extends "base.html" %}
 {% block title %}{{ recipe.name }} - Kitchen Planner{% endblock %}
 {% block content %}
-<section class="toolbar"><div><p class="eyebrow">Ricettario · {{ recipe.servings }} persone</p><h2>{{ recipe.name }}</h2></div><div class="actions"><a class="button secondary" href="{{ url_for('recipes') }}">Ricettario</a><a class="button" href="{{ url_for('edit_recipe', recipe_id=recipe.id) }}"><i class="fa-solid fa-pen"></i> Modifica</a></div></section>
+<section class="toolbar"><div><p class="eyebrow">Ricettario · <span id="servings-display">{{ recipe.servings }}</span> persone <div class="servings-controls"><button id="servings-minus" class="servings-btn" aria-label="Diminuisci porzioni">−</button><button id="servings-plus" class="servings-btn" aria-label="Aumenta porzioni">+</button></div></p><h2>{{ recipe.name }}</h2></div><div class="actions"><a class="button secondary" href="{{ url_for('recipes') }}">Ricettario</a><a class="button" href="{{ url_for('edit_recipe', recipe_id=recipe.id) }}"><i class="fa-solid fa-pen"></i> Modifica</a></div></section>
 <div class="two-column">
   <section class="form-panel">
     {% if recipe.picture %}<img class="recipe-hero" src="{{ recipe.picture }}" alt="{{ recipe.name }}">{% endif %}
     <h3>Ingredienti</h3>
     <div class="item-list">
       {% for ingredient in recipe.ingredients %}
-        <div class="ingredient-simple">
+        <div class="ingredient-simple" data-original-quantity="{{ ingredient.quantity }}" data-quantity-is-qb="{{ ingredient.quantity_is_qb }}">
           <span class="ingredient-info">{% if ingredient.picture %}<img class="ingredient-icon" src="{{ ingredient.picture }}" alt="">{% else %}<span class="ingredient-icon ingredient-icon-placeholder" aria-hidden="true">{{ ingredient.name[:1] }}</span>{% endif %}<span>{{ ingredient.name }}</span></span>
-          <strong>{% if ingredient.quantity_is_qb %}q.b.{% else %}{{ ingredient.quantity|qty }} {{ ingredient.unit }}{% endif %}</strong>
+          <strong class="ingredient-quantity">{% if ingredient.quantity_is_qb %}q.b.{% else %}{{ ingredient.quantity|qty }} {{ ingredient.unit }}{% endif %}</strong>
         </div>
       {% endfor %}
     </div>
@@ -23,4 +23,54 @@
     {% if recipe.notes %}<div class="recipe-notes"><h3>Note</h3>{{ recipe.notes|markdown }}</div>{% else %}<p class="field-help">Nessuna nota per questa ricetta.</p>{% endif %}
   </section>
 </div>
+<script>
+  const originalServings = {{ recipe.servings }};
+  let currentServings = {{ recipe.servings }};
+
+  const servingsDisplay = document.getElementById('servings-display');
+  const servingsMinus = document.getElementById('servings-minus');
+  const servingsPlus = document.getElementById('servings-plus');
+  const ingredients = document.querySelectorAll('.ingredient-simple');
+
+  function updateIngredients() {
+    const ratio = currentServings / originalServings;
+    
+    ingredients.forEach(ingredient => {
+      const isQb = ingredient.dataset.quantityIsQb === 'True';
+      const quantityElement = ingredient.querySelector('.ingredient-quantity');
+      
+      if (isQb) {
+        quantityElement.textContent = 'q.b.';
+      } else {
+        const originalQuantity = parseFloat(ingredient.dataset.originalQuantity);
+        const newQuantity = originalQuantity * ratio;
+        const unit = quantityElement.textContent.split(' ').pop();
+        
+        // Format the quantity nicely
+        let formattedQuantity;
+        if (newQuantity % 1 === 0) {
+          formattedQuantity = newQuantity.toString();
+        } else {
+          formattedQuantity = newQuantity.toFixed(1);
+        }
+        
+        quantityElement.textContent = formattedQuantity + ' ' + unit;
+      }
+    });
+  }
+
+  servingsMinus.addEventListener('click', () => {
+    if (currentServings > 1) {
+      currentServings--;
+      servingsDisplay.textContent = currentServings;
+      updateIngredients();
+    }
+  });
+
+  servingsPlus.addEventListener('click', () => {
+    currentServings++;
+    servingsDisplay.textContent = currentServings;
+    updateIngredients();
+  });
+</script>
 {% endblock %}
