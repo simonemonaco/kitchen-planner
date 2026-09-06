@@ -58,6 +58,7 @@
   if (!picker) return;
   const search = picker.querySelector('[data-meal-recipe-search]');
   const results = Array.from(picker.querySelectorAll('[data-recipe-name]'));
+  const resultsContainer = picker.querySelector('[data-meal-recipe-results]');
   const noResults = picker.querySelector('[data-meal-recipe-no-results]');
   const noResultsText = picker.querySelector('[data-meal-recipe-no-results-text]');
   const newRecipeLink = picker.querySelector('[data-new-recipe-link]');
@@ -66,10 +67,11 @@
   function updateResults() {
     const query = search.value.trim().toLocaleLowerCase();
     const visibleResults = results.filter(result => {
-      const visible = !query || result.dataset.recipeName.includes(query);
+      const visible = Boolean(query) && result.dataset.recipeName.includes(query);
       result.hidden = !visible;
       return visible;
     });
+    if (resultsContainer) resultsContainer.hidden = !query;
     const existingMatch = query && existingNames.some(name => name.includes(query));
     const showNew = query && !visibleResults.length && !existingMatch;
     const showAlreadyAdded = query && !visibleResults.length && existingMatch;

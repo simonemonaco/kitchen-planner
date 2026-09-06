@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Scansione settimanale - Kitchen Planner{% endblock %}
+{% block content %}
+<section class="toolbar"><div><p class="eyebrow">Pianificazione</p><h2>Scansione settimanale</h2><p class="field-help">Cerca e aggiungi una o più ricette per ogni momento. Le porzioni sono impostabili per singola ricetta.</p></div><a class="button secondary" href="{{ url_for('meals_agenda') }}">Agenda pasti</a></section>
+<form method="post">
+  <input type="hidden" name="action" value="save_defaults">
+  <div class="weekly-grid">
+    {% for day in days %}
+      <section class="weekly-day list-panel">
+        <div class="section-heading"><div><p class="eyebrow">{{ day.label }}</p><h3>{{ day.date|date_it }}</h3></div></div>
+        {% for meal_type, meal_label in {'colazione':'Colazione','pranzo':'Pranzo','cena':'Cena'}.items() %}
+          {% set key = day.weekday|string + '_' + meal_type %}
+          {% set slot = slots.get(key, {}) %}
+          <fieldset class="weekly-slot" data-weekly-slot="{{ key }}">
+            <legend>{{ meal_label }}</legend>
+            <div class="weekly-recipe-search"><input type="search" placeholder="Cerca una ricetta..." list="recipes-{{ key }}" data-recipe-search><datalist id="recipes-{{ key }}">{% for recipe in recipes %}<option value="{{ recipe.name }}" data-recipe-id="{{ recipe.id }}"></option>{% endfor %}</datalist><button class="small-button secondary" type="button" data-add-recipe><i class="fa-solid fa-plus" aria-hidden="true"></i> Aggiungi</button></div>
+            <div class="weekly-selected-recipes" data-selected-recipes>
+              {% for selected in slot.recipes or [] %}{% set recipe = recipes|selectattr('id', 'equalto', selected.id)|first %}{% if recipe %}<div class="weekly-selected-recipe" data-selected-recipe data-recipe-id="{{ recipe.id }}"><span class="weekly-recipe-name">{% if recipe.picture %}<img src="{{ recipe.picture }}" alt="">{% else %}<i class="fa-solid fa-utensils" aria-hidden="true"></i>{% endif %}{{ recipe.name }}</span><input type="hidden" name="recipe_ids_{{ key }}" value="{{ recipe.id }}"><label>Persone<input type="number" min="1" name="recipe_people_{{ key }}_{{ recipe.id }}" value="{{ selected.people_count }}"></label><button class="small-button danger icon-only" type="button" data-remove-recipe aria-label="Rimuovi {{ recipe.name }}"><i class="fa-solid fa-trash" aria-hidden="true"></i></button></div>{% endif %}{% endfor %}
+            </div>
+            <p class="field-help" data-no-recipes {% if slot.recipes %}hidden{% endif %}>Nessuna ricetta selezionata.</p>
+          </fieldset>
+        {% endfor %}
+      </section>
+    {% endfor %}
+  </div>
+  <div class="form-actions weekly-actions"><button class="button" type="submit"><i class="fa-solid fa-floppy-disk"></i> Salva default</button></div>
+</form>
+<section class="feature-card weekly-load-card"><div><p class="eyebrow">Settimana corrente</p><h3>Carica i default nell’agenda</h3><p>Il nome viene generato automaticamente, per esempio “Colazione 12 settembre”. I pasti già presenti non vengono duplicati.</p><div class="debug-banner"><i class="fa-solid fa-bug" aria-hidden="true"></i> Debug: i default non vengono caricati automaticamente. Premi il pulsante per inserirli nell’agenda.</div></div><form method="post"><input type="hidden" name="action" value="load_defaults"><button class="button secondary" type="submit"><i class="fa-solid fa-calendar-plus"></i> Carica settimana</button></form></section>
+{% endblock %}
+{% block page_scripts %}
+<script>
+(() => {
+  document.querySelectorAll('[data-weekly-slot]').forEach(slot => {
+    const search = slot.querySelector('[data-recipe-search]');
+    const add = slot.querySelector('[data-add-recipe]');
+    const selected = slot.querySelector('[data-selected-recipes]');
+    const empty = slot.querySelector('[data-no-recipes]');
+    const key = slot.dataset.weeklySlot;
+    function updateEmpty() { empty.hidden = selected.children.length > 0; }
+    add.addEventListener('click', () => {
+      const value = search.value.trim();
+      const option = Array.from(slot.querySelectorAll('datalist option')).find(item => item.value.toLocaleLowerCase() === value.toLocaleLowerCase());
+      if (!option || selected.querySelector(`[data-recipe-id="${option.dataset.recipeId}"]`)) return;
+      const id = option.dataset.recipeId;
+      const row = document.createElement('div'); row.className = 'weekly-selected-recipe'; row.dataset.selectedRecipe = ''; row.dataset.recipeId = id;
+      row.innerHTML = `<span class="weekly-recipe-name"><i class="fa-solid fa-utensils" aria-hidden="true"></i>${option.value}</span><input type="hidden" name="recipe_ids_${key}" value="${id}"><label>Persone<input type="number" min="1" name="recipe_people_${key}_${id}" value="1"></label><button class="small-button danger icon-only" type="button" data-remove-recipe aria-label="Rimuovi ${option.value}"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>`;
+      selected.appendChild(row); search.value = ''; updateEmpty();
+    });
+    selected.addEventListener('click', event => { const button = event.target.closest('[data-remove-recipe]'); if (button) { button.closest('[data-selected-recipe]').remove(); updateEmpty(); } });
+  });
+})();
+</script>
+{% endblock %}

@@ -2,6 +2,10 @@
 {% block title %}Agenda pasti - Kitchen Planner{% endblock %}
 {% block content %}
 <section class="toolbar"><div><p class="eyebrow">Pianificazione</p><h2>Agenda pasti</h2></div><div class="actions"><a class="button secondary" href="{{ url_for('meals_history') }}">Storico pasti</a><a class="button" href="{{ url_for('new_meal') }}"><i class="fa-solid fa-plus"></i> Nuovo pasto</a></div></section>
+<section class="feature-card">
+  <div><p class="eyebrow">Settimana</p><h3>Scansione settimanale</h3><p>Imposta i pasti ricorrenti e caricali nell’agenda quando vuoi. La generazione automatica non è ancora attiva.</p></div>
+  <a class="button" href="{{ url_for('weekly_meal_scan') }}"><i class="fa-solid fa-calendar-week"></i> Apri scansione</a>
+</section>
 <section class="list-panel">
   {% if meals %}<div class="item-list">{% for meal in meals %}
     <article class="meal-row">

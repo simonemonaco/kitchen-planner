@@ -138,12 +138,26 @@ REQUIRED_TABLES = [
     "meal_recipes",
     "recipe_history",
     "meal_consumptions",
+    "meal_defaults",
+    "meal_default_recipes",
 ]
 
 MEAL_TYPES = {
     "colazione": "Colazione",
     "pranzo": "Pranzo",
     "cena": "Cena",
+}
+
+RECIPE_MEAL_TYPES = {
+    "antipasto": "Antipasto",
+    "primo": "Primo",
+    "secondo": "Secondo",
+    "contorno": "Contorno",
+    "piatto_unico": "Piatto unico",
+    "colazione": "Colazione",
+    "merenda": "Merenda",
+    "dolce": "Dolce",
+    "altro": "Altro",
 }
 
 TRUTHY_VALUES = {"1", "true", "yes", "on"}
@@ -334,6 +348,7 @@ def register_template_helpers(app: Flask) -> None:
         return {
             "locations": LOCATIONS,
             "categories": CATEGORIES,
+            "recipe_meal_types": RECIPE_MEAL_TYPES,
             "units": UNITS,
             "today": date.today().isoformat(),
             "now_local_value": datetime.now().strftime("%Y-%m-%dT%H:%M"),
@@ -823,6 +838,29 @@ def register_routes(app: Flask) -> None:
         meals = list_meals()
         return render_template("meals_agenda.html", meals=meals)
 
+    @app.route("/meals/weekly", methods=("GET", "POST"))
+    def weekly_meal_scan():
+        week_start = monday_of_week(date.today())
+        if request.method == "POST":
+            action = clean_text(request.form.get("action"))
+            slots = weekly_slots_from_form(request.form)
+            if action == "save_defaults":
+                save_meal_defaults(slots)
+                flash("Default settimanali salvati.", "success")
+            elif action == "load_defaults":
+                created = load_meal_defaults(week_start)
+                flash(f"{created} pasti caricati nell'agenda della settimana.", "success")
+            else:
+                flash("Azione non valida.", "error")
+            return redirect(url_for("weekly_meal_scan"))
+        return render_template(
+            "weekly_meal_scan.html",
+            week_start=week_start,
+            days=weekly_meal_days(week_start),
+            slots=list_meal_defaults(),
+            recipes=list_recipes(),
+        )
+
     @app.get("/meals/history")
     def meals_history():
         return render_template("meals_history.html", meals=list_meal_history())
@@ -1294,12 +1332,16 @@ def parse_optional_int(value: str | int | None, default: int | None = None) -> i
     return parsed if parsed > 0 else default
 
 
-def parse_iso_date(value: str | None) -> date | None:
+def parse_iso_date(value: str | date | None) -> date | None:
     if not value:
         return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
     try:
         return date.fromisoformat(value)
-    except ValueError:
+    except (TypeError, ValueError):
         return None
 
 
@@ -1866,6 +1908,95 @@ def empty_meal_form() -> dict[str, Any]:
     return {"name": "", "meal_date": date.today().isoformat(), "meal_type": "cena", "people_count": 2, "recipe_ids": []}
 
 
+def monday_of_week(day: date) -> date:
+    return day - timedelta(days=day.weekday())
+
+
+def weekly_meal_days(week_start: date) -> list[dict[str, Any]]:
+    italian_days = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì", "Sabato", "Domenica"]
+    return [{"weekday": index, "date": week_start + timedelta(days=index), "label": italian_days[index]} for index in range(7)]
+
+
+def month_name(month: int) -> str:
+    return ["", "gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno", "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre"][month]
+
+
+def weekly_slot_key(weekday: int, meal_type: str) -> str:
+    return f"{weekday}_{meal_type}"
+
+
+def weekly_slots_from_form(form: Any) -> list[dict[str, Any]]:
+    slots = []
+    for weekday in range(7):
+        for meal_type in MEAL_TYPES:
+            key = weekly_slot_key(weekday, meal_type)
+            slots.append({
+                "weekday": weekday,
+                "meal_type": meal_type,
+                "recipe_ids": parse_id_list(form.getlist(f"recipe_ids_{key}")),
+                "recipe_people": {
+                    recipe_id: parse_optional_int(form.get(f"recipe_people_{key}_{recipe_id}"), 2) or 2
+                    for recipe_id in parse_id_list(form.getlist(f"recipe_ids_{key}"))
+                },
+            })
+    return slots
+
+
+def list_meal_defaults() -> dict[str, dict[str, Any]]:
+    supabase = get_supabase()
+    defaults = supabase.table("meal_defaults").select("*").eq("active", True).execute().data or []
+    links = supabase.table("meal_default_recipes").select("meal_default_id,recipe_id,people_count,sort_order").order("sort_order").execute().data or []
+    result = {}
+    for row in defaults:
+        key = weekly_slot_key(int(row["weekday"]), row["meal_type"])
+        result[key] = row | {"recipes": [
+            {"id": int(link["recipe_id"]), "people_count": int(link.get("people_count") or 2)}
+            for link in links if int(link["meal_default_id"]) == int(row["id"])
+        ]}
+    return result
+
+
+def save_meal_defaults(slots: list[dict[str, Any]]) -> None:
+    supabase = get_supabase()
+    for slot in slots:
+        response = supabase.table("meal_defaults").upsert({
+            "weekday": slot["weekday"], "meal_type": slot["meal_type"], "name": MEAL_TYPES[slot["meal_type"]],
+            "people_count": sum(slot["recipe_people"].values()) or 2,
+            "active": bool(slot["recipe_ids"]), "updated_at": utc_now(),
+        }, on_conflict="weekday,meal_type").execute()
+        default_id = int(response.data[0]["id"])
+        supabase.table("meal_default_recipes").delete().eq("meal_default_id", default_id).execute()
+        if slot["recipe_ids"]:
+            supabase.table("meal_default_recipes").insert([
+                {"meal_default_id": default_id, "recipe_id": recipe_id, "people_count": slot["recipe_people"][recipe_id], "sort_order": order}
+                for order, recipe_id in enumerate(slot["recipe_ids"])
+            ]).execute()
+
+
+def load_meal_defaults(week_start: date) -> int:
+    defaults = list_meal_defaults()
+    existing = get_supabase().table("meals").select("meal_date,meal_type").gte(
+        "meal_date", week_start.isoformat()
+    ).lt("meal_date", (week_start + timedelta(days=7)).isoformat()).is_("completed_at", "null").execute().data or []
+    existing_keys = {(row["meal_date"], row["meal_type"]) for row in existing}
+    created = 0
+    for slot in defaults.values():
+        if not slot["recipes"]:
+            continue
+        meal_date = week_start + timedelta(days=int(slot["weekday"]))
+        if (meal_date.isoformat(), slot["meal_type"]) in existing_keys:
+            continue
+        create_meal({
+            "name": f"{MEAL_TYPES[slot['meal_type']]} {meal_date.day} {month_name(meal_date.month)}",
+            "meal_date": meal_date.isoformat(), "meal_type": slot["meal_type"],
+            "people_count": sum(recipe["people_count"] for recipe in slot["recipes"]) or 2,
+            "recipe_ids": [recipe["id"] for recipe in slot["recipes"]],
+            "recipe_people": {recipe["id"]: recipe["people_count"] for recipe in slot["recipes"]},
+        })
+        created += 1
+    return created
+
+
 def meal_form_data(form: Any) -> dict[str, Any]:
     return {
         "name": clean_text(form.get("name")),
@@ -1892,7 +2023,7 @@ def validate_meal_data(data: dict[str, Any]) -> list[str]:
 
 
 def empty_recipe_form() -> dict[str, Any]:
-    return {"name": "", "servings": 2, "picture": "", "notes": ""}
+    return {"name": "", "servings": 2, "meal_type": "altro", "use_automatically": True, "picture": "", "notes": ""}
 
 
 def empty_ingredient() -> dict[str, Any]:
@@ -1951,6 +2082,8 @@ def recipe_form_data(form: Any) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     return {
         "name": clean_text(form.get("name")),
         "servings": parse_optional_int(form.get("servings"), 2) or 2,
+        "meal_type": clean_text(form.get("meal_type"), "altro"),
+        "use_automatically": "1" in form.getlist("use_automatically"),
         "picture": picture,
         "notes": clean_text(form.get("notes")),
     }, ingredients
@@ -1962,6 +2095,8 @@ def validate_recipe_data(data: dict[str, Any], ingredients: list[dict[str, Any]]
         errors.append("Il nome della ricetta è obbligatorio.")
     if int(data.get("servings") or 0) <= 0:
         errors.append("Il numero di persone della ricetta deve essere maggiore di zero.")
+    if data.get("meal_type") not in RECIPE_MEAL_TYPES:
+        errors.append("Scegli un tipo di pasto valido.")
     if not ingredients:
         errors.append("Inserisci almeno un ingrediente.")
     for ingredient in ingredients:
@@ -1975,7 +2110,8 @@ def validate_recipe_data(data: dict[str, Any], ingredients: list[dict[str, Any]]
 def create_recipe(data: dict[str, Any], ingredients: list[dict[str, Any]]) -> int:
     supabase = get_supabase()
     response = supabase.table("recipes").insert({
-        "name": data["name"], "servings": data["servings"], "picture": data.get("picture") or "", "notes": data.get("notes") or "",
+        "name": data["name"], "servings": data["servings"], "meal_type": data["meal_type"],
+        "use_automatically": data["use_automatically"], "picture": data.get("picture") or "", "notes": data.get("notes") or "",
         "updated_at": utc_now(),
     }).execute()
     recipe_id = int(response.data[0]["id"])
@@ -1999,7 +2135,8 @@ def save_recipe_ingredients(recipe_id: int, ingredients: list[dict[str, Any]]) -
 def update_recipe(recipe_id: int, data: dict[str, Any], ingredients: list[dict[str, Any]]) -> None:
     supabase = get_supabase()
     supabase.table("recipes").update({
-        "name": data["name"], "servings": data["servings"], "picture": data.get("picture") or "", "notes": data.get("notes") or "", "updated_at": utc_now(),
+        "name": data["name"], "servings": data["servings"], "meal_type": data["meal_type"],
+        "use_automatically": data["use_automatically"], "picture": data.get("picture") or "", "notes": data.get("notes") or "", "updated_at": utc_now(),
     }).eq("id", recipe_id).execute()
     supabase.table("recipe_ingredients").delete().eq("recipe_id", recipe_id).execute()
     save_recipe_ingredients(recipe_id, ingredients)
@@ -2035,7 +2172,10 @@ def create_meal(data: dict[str, Any]) -> int:
     supabase = get_supabase()
     response = supabase.table("meals").insert({"name": data["name"], "meal_date": data["meal_date"], "meal_type": data["meal_type"], "people_count": data["people_count"], "updated_at": utc_now()}).execute()
     meal_id = int(response.data[0]["id"])
-    supabase.table("meal_recipes").insert([{"meal_id": meal_id, "recipe_id": recipe_id, "sort_order": order} for order, recipe_id in enumerate(data["recipe_ids"])]).execute()
+    recipe_people = data.get("recipe_people", {})
+    supabase.table("meal_recipes").insert([{
+        "meal_id": meal_id, "recipe_id": recipe_id, "people_count": int(recipe_people.get(recipe_id, data["people_count"])), "sort_order": order
+    } for order, recipe_id in enumerate(data["recipe_ids"])]).execute()
     return meal_id
 
 
@@ -2055,7 +2195,9 @@ def add_recipe_to_meal(meal_id: int, recipe_id: int) -> bool:
     if any(int(link["recipe_id"]) == recipe_id for link in links):
         return False
     next_order = max((int(link.get("sort_order") or 0) for link in links), default=-1) + 1
-    get_supabase().table("meal_recipes").insert({"meal_id": meal_id, "recipe_id": recipe_id, "sort_order": next_order}).execute()
+    meal = get_meal(meal_id)
+    people_count = int(meal.get("people_count") or 2) if meal else 2
+    get_supabase().table("meal_recipes").insert({"meal_id": meal_id, "recipe_id": recipe_id, "people_count": people_count, "sort_order": next_order}).execute()
     return True
 
 
@@ -2096,8 +2238,12 @@ def get_meal(meal_id: int) -> dict[str, Any] | None:
     if not response.data:
         return None
     meal = response.data[0]
-    recipe_ids = [int(row["recipe_id"]) for row in (get_supabase().table("meal_recipes").select("recipe_id").eq("meal_id", meal_id).order("sort_order").execute().data or [])]
+    recipe_links = get_supabase().table("meal_recipes").select("recipe_id,people_count").eq("meal_id", meal_id).order("sort_order").execute().data or []
+    recipe_ids = [int(row["recipe_id"]) for row in recipe_links]
     meal["recipes"] = [get_recipe(recipe_id) for recipe_id in recipe_ids]
+    for recipe, link in zip(meal["recipes"], recipe_links):
+        if recipe:
+            recipe["people_count"] = int(link.get("people_count") or meal["people_count"] or 2)
     meal["meal_type_label"] = MEAL_TYPES.get(meal["meal_type"], meal["meal_type"])
     return meal
 
@@ -2116,7 +2262,7 @@ def aggregate_meal_ingredients(meal: dict[str, Any]) -> list[dict[str, Any]]:
     for recipe in meal.get("recipes", []):
         if not recipe:
             continue
-        scale = float(meal["people_count"]) / float(recipe["servings"] or 2)
+        scale = float(recipe.get("people_count") or meal["people_count"]) / float(recipe["servings"] or 2)
         for ingredient in recipe["ingredients"]:
             prior_id = int(ingredient["item_prior_id"])
             base_unit, factor = unit_factor(ingredient["unit"])
