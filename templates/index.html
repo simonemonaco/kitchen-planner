@@ -87,11 +87,13 @@
                      data-expiry="{{ item.expiry_date or '' }}"
                      data-created="{{ item.created_at or '' }}">
               <div class="product-media">
+                <a href="{{ url_for('edit_inventory_item', item_id=item.id) }}" aria-label="Apri {{ item.name }}">
                 {% if item.picture %}
                   <img src="{{ item.picture }}" alt="{{ item.name }}">
                 {% else %}
                   <span>{{ item.name[:1] }}</span>
                 {% endif %}
+                </a>
               </div>
               <div class="item-main">
                 <h3>{{ item.name }}</h3>
@@ -113,6 +115,10 @@
                     <button class="small-button secondary icon-only" type="submit" aria-label="Aumenta quantita'"><i class="fa-solid fa-plus" aria-hidden="true"></i></button>
                   </form>
                 </div>
+                <div data-today-quantity-change class="today-quantity-change {% if item.today_quantity_change > 0 %}is-added{% else %}is-used{% endif %}" aria-label="Quantita' {% if item.today_quantity_change > 0 %}aggiunta{% else %}usata{% endif %} oggi" {% if not item.today_quantity_change %}hidden{% endif %}>
+                    <span aria-hidden="true">{% if item.today_quantity_change > 0 %}▲{% else %}▼{% endif %}</span>
+                    {{ item.today_quantity_change|abs|qty }} {{ item.unit }}
+                  </div>
                 <div class="badges">
                   {% if item.expiry_date %}
                     {% if item.expiry_date < today %}
@@ -146,11 +152,13 @@
                      data-expiry="{{ item.expiry_date or '' }}"
                      data-created="{{ item.created_at or '' }}">
               <div class="product-media">
+                <a href="{{ url_for('edit_inventory_item', item_id=item.id) }}" aria-label="Apri {{ item.name }}">
                 {% if item.picture %}
                   <img src="{{ item.picture }}" alt="{{ item.name }}">
                 {% else %}
                   <span>{{ item.name[:1] }}</span>
                 {% endif %}
+                </a>
               </div>
               <div class="item-main">
                 <div>
@@ -163,6 +171,10 @@
                     {% endif %}
                   </p>
                 </div>
+                <div data-today-quantity-change class="today-quantity-change {% if item.today_quantity_change > 0 %}is-added{% else %}is-used{% endif %}" aria-label="Quantita' {% if item.today_quantity_change > 0 %}aggiunta{% else %}usata{% endif %} oggi" {% if not item.today_quantity_change %}hidden{% endif %}>
+                    <span aria-hidden="true">{% if item.today_quantity_change > 0 %}▲{% else %}▼{% endif %}</span>
+                    {{ item.today_quantity_change|abs|qty }} {{ item.unit }}
+                  </div>
                 <div class="quantity-adjust" data-async-qty aria-label="Regola quantita' {{ item.name }}">
                   <form action="{{ url_for('adjust_inventory_quantity', item_id=item.id, location=selected_location, view=view_mode) }}" method="post" data-qty-form>
                     <input type="hidden" name="direction" value="dec">

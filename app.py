@@ -130,6 +130,7 @@ DEFAULT_PRIOR_ITEMS = [
 REQUIRED_TABLES = [
     "item_prior",
     "inventory_items",
+    "inventory_quantity_changes",
     "shopping_items",
     "items_history",
     "recipes",
@@ -552,11 +553,25 @@ def register_routes(app: Flask) -> None:
             "expiry_estimated": item.get("expiry_estimated") or 0,
             "notes": item.get("notes") or "",
         }
-        update_inventory_item(item_id, int(item["item_prior_id"]), payload)
+        old_unit = item.get("unit") or "pz"
+        old_base, old_factor = unit_factor(old_unit)
+        new_base, new_factor = unit_factor(new_unit)
+        quantity_delta = new_quantity - current_quantity
+        if old_base == new_base:
+            quantity_delta = new_quantity - (current_quantity * old_factor / new_factor)
+        update_inventory_item(
+            item_id,
+            int(item["item_prior_id"]),
+            payload,
+            quantity_delta=quantity_delta,
+        )
         if is_xhr:
+            today_change = get_today_quantity_change(item_id, new_unit)
             return jsonify({
                 "ok": True,
                 "qty_display": f"{_format_qty(new_quantity)} {new_unit}",
+                "today_quantity_change": today_change,
+                "today_quantity_change_display": f"{_format_qty(abs(today_change))} {new_unit}",
             })
         return redirect(url_for("index", location=request.args.get("location", ""), view=request.args.get("view", "")))
 
@@ -2257,6 +2272,28 @@ def unit_factor(unit: str) -> tuple[str, float]:
     return normalized, 1.0
 
 
+def convert_quantity(quantity: float, from_unit: str | None, to_unit: str | None) -> float:
+    from_base, from_factor = unit_factor(from_unit or "pz")
+    to_base, to_factor = unit_factor(to_unit or "pz")
+    if from_base != to_base:
+        return 0.0
+    return quantity * from_factor / to_factor
+
+
+def get_today_quantity_change(item_id: int, item_unit: str | None) -> float:
+    changes = (
+        get_supabase()
+        .table("inventory_quantity_changes")
+        .select("quantity,unit")
+        .eq("inventory_item_id", item_id)
+        .eq("changed_on", date.today().isoformat())
+        .execute()
+        .data
+        or []
+    )
+    return sum(convert_quantity(float(change["quantity"]), change.get("unit"), item_unit) for change in changes)
+
+
 def aggregate_meal_ingredients(meal: dict[str, Any]) -> list[dict[str, Any]]:
     aggregated: dict[int, dict[str, Any]] = {}
     for recipe in meal.get("recipes", []):
@@ -2368,6 +2405,7 @@ def consume_meal_ingredients(meal: dict[str, Any]) -> None:
                     int(row["id"]),
                     int(row["item_prior_id"]),
                     row | {"quantity": remaining_base / row_factor, "unit": row["unit"]},
+                    quantity_delta=-(consumed_base / row_factor),
                 )
             needed_base -= consumed_base
 
@@ -2384,13 +2422,24 @@ def restore_meal_ingredients(meal: dict[str, Any]) -> None:
             row = current[0]
             if row.get("unit") == record["consumed_unit"]:
                 quantity = float(row.get("quantity") or 0) + float(record["consumed_quantity"])
-                supabase.table("inventory_items").update({"quantity": quantity, "updated_at": utc_now()}).eq("id", item_id).execute()
+                update_inventory_item(
+                    item_id,
+                    int(row["item_prior_id"]),
+                    row | {"quantity": quantity, "unit": row["unit"]},
+                    quantity_delta=float(record["consumed_quantity"]),
+                )
             else:
                 snapshot = {}
         if not current or not snapshot:
             payload = {key: snapshot[key] for key in ("item_prior_id", "quantity", "unit", "location", "expiry_date", "expiry_estimated", "notes") if key in snapshot}
             if payload:
-                supabase.table("inventory_items").insert(payload).execute()
+                response = supabase.table("inventory_items").insert(payload).execute()
+                if response.data:
+                    record_inventory_quantity_change(
+                        int(response.data[0]["id"]),
+                        float(snapshot.get("quantity") or 0),
+                        snapshot.get("unit") or "pz",
+                    )
     supabase.table("meal_consumptions").delete().eq("meal_id", meal["id"]).execute()
 
 
@@ -2692,7 +2741,30 @@ def list_inventory_items(location: str | None = None) -> list[dict[str, Any]]:
         query = query.eq("location", location)
     inventory_items = query.execute().data or []
     prior_map = load_item_prior_map([int(item["item_prior_id"]) for item in inventory_items])
-    merged = [merge_item_with_prior(item, prior_map.get(int(item["item_prior_id"]))) for item in inventory_items]
+    changes = (
+        get_supabase()
+        .table("inventory_quantity_changes")
+        .select("inventory_item_id,quantity,unit")
+        .in_("inventory_item_id", [int(item["id"]) for item in inventory_items])
+        .eq("changed_on", date.today().isoformat())
+        .execute()
+        .data
+        or []
+    ) if inventory_items else []
+    change_map: dict[int, float] = {}
+    for change in changes:
+        item_id = int(change["inventory_item_id"])
+        change_map[item_id] = change_map.get(item_id, 0) + convert_quantity(
+            float(change["quantity"]), change.get("unit"), next(
+                (item.get("unit") for item in inventory_items if int(item["id"]) == item_id),
+                change.get("unit"),
+            )
+        )
+    merged = [
+        merge_item_with_prior(item, prior_map.get(int(item["item_prior_id"])))
+        | {"today_quantity_change": change_map.get(int(item["id"]), 0)}
+        for item in inventory_items
+    ]
 
     return sorted(
         merged,
@@ -2731,6 +2803,7 @@ def create_inventory_item(
                     int(existing["id"]),
                     item_prior_id,
                     existing | {"quantity": new_quantity, "unit": existing["unit"]},
+                    quantity_delta=float(data["quantity"]) * incoming_factor / existing_factor,
                 )
                 return int(existing["id"])
     payload = {
@@ -2746,7 +2819,9 @@ def create_inventory_item(
     response = get_supabase().table("inventory_items").insert(payload).execute()
     if not response.data:
         raise RuntimeError("Inserimento inventario non riuscito.")
-    return int(response.data[0]["id"])
+    item_id = int(response.data[0]["id"])
+    record_inventory_quantity_change(item_id, float(data["quantity"]), data["unit"])
+    return item_id
 
 
 def find_similar_inventory_item(item_prior_id: int, expiry_date: str | None) -> dict[str, Any] | None:
@@ -2767,7 +2842,13 @@ def find_similar_inventory_item(item_prior_id: int, expiry_date: str | None) -> 
     return min(candidates, key=lambda value: (value[0], value[1].get("id", 0)))[1] if candidates else None
 
 
-def update_inventory_item(item_id: int, item_prior_id: int, data: dict[str, Any]) -> None:
+def update_inventory_item(
+    item_id: int,
+    item_prior_id: int,
+    data: dict[str, Any],
+    *,
+    quantity_delta: float | None = None,
+) -> None:
     payload = {
         "item_prior_id": item_prior_id,
         "quantity": data["quantity"],
@@ -2779,6 +2860,21 @@ def update_inventory_item(item_id: int, item_prior_id: int, data: dict[str, Any]
         "updated_at": utc_now(),
     }
     get_supabase().table("inventory_items").update(payload).eq("id", item_id).execute()
+    if quantity_delta:
+        record_inventory_quantity_change(item_id, quantity_delta, data["unit"])
+
+
+def record_inventory_quantity_change(item_id: int, quantity: float, unit: str) -> None:
+    if not quantity:
+        return
+    get_supabase().table("inventory_quantity_changes").insert(
+        {
+            "inventory_item_id": item_id,
+            "quantity": quantity,
+            "unit": unit,
+            "changed_on": date.today().isoformat(),
+        }
+    ).execute()
 
 
 def delete_inventory_item(item_id: int) -> None:

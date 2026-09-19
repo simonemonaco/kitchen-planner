@@ -27,6 +27,14 @@
         if (data.ok) {
           const pill = wrapper.querySelector("[data-qty-pill]");
           if (pill) pill.textContent = data.qty_display;
+          const change = wrapper.closest(".item-main")?.querySelector("[data-today-quantity-change]");
+          if (change) {
+            const amount = Number(data.today_quantity_change || 0);
+            change.hidden = !amount;
+            change.classList.toggle("is-added", amount > 0);
+            change.classList.toggle("is-used", amount < 0);
+            change.innerHTML = `<span aria-hidden="true">${amount > 0 ? "▲" : "▼"}</span> ${data.today_quantity_change_display || Math.abs(amount)}`;
+          }
         }
       } catch (_) {
         // Network error — let the native submit handle it
