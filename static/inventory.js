@@ -124,6 +124,26 @@
     searchInput.addEventListener("input", () => applyFilter(searchInput.value));
   }
 
+  // Cotto/Aperto: detach the selected amount into a new refrigerated item.
+  const preparationDialog = document.querySelector("[data-preparation-dialog]");
+  if (preparationDialog) {
+    const form = preparationDialog.querySelector("[data-preparation-form]");
+    const description = preparationDialog.querySelector("[data-preparation-description]");
+    const quantity = preparationDialog.querySelector("[data-preparation-quantity]");
+    document.querySelectorAll("[data-open-preparation]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const max = button.dataset.itemQuantity;
+        form.action = `/inventory/${button.dataset.itemId}/prepare?location=${encodeURIComponent(listPanel?.dataset.inventoryLocation || "")}&view=${encodeURIComponent(listPanel?.dataset.inventoryView || "")}`;
+        description.textContent = `${button.dataset.itemName}: scegli quanto trasformare (disponibile ${max} ${button.dataset.itemUnit}).`;
+        quantity.value = max;
+        quantity.max = max;
+        preparationDialog.showModal();
+      });
+    });
+    preparationDialog.querySelector("[data-preparation-cancel]").addEventListener("click", () => preparationDialog.close());
+    preparationDialog.addEventListener("click", (event) => { if (event.target === preparationDialog) preparationDialog.close(); });
+  }
+
   // Finishing or deleting reloads the page. Keep the viewport at the same
   // point in the current section instead of jumping back to the top.
   document.querySelectorAll("[data-inventory-navigation]").forEach((form) => {

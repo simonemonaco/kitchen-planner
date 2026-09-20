@@ -509,6 +509,49 @@ def register_routes(app: Flask) -> None:
         )
         return redirect_inventory_context()
 
+    @app.post("/inventory/<int:item_id>/prepare")
+    def prepare_inventory_item(item_id: int):
+        item = get_inventory_item(item_id)
+        if not item:
+            flash("Prodotto non trovato.", "error")
+            return redirect(url_for("index"))
+
+        status = clean_text(request.form.get("preparation_status")).lower()
+        if status not in {"cotto", "aperto"}:
+            flash("Modalità non valida.", "error")
+            return redirect_inventory_context()
+        try:
+            quantity = float(str(request.form.get("quantity", "")).replace(",", "."))
+        except (TypeError, ValueError):
+            quantity = 0
+        available = float(item.get("quantity") or 0)
+        if quantity <= 0 or quantity > available:
+            flash("La quantità deve essere positiva e non superiore a quella disponibile.", "error")
+            return redirect_inventory_context()
+
+        create_inventory_item(
+            int(item["item_prior_id"]),
+            {
+                "quantity": quantity,
+                "unit": item["unit"],
+                "location": "frigo",
+                "expiry_date": (date.today() + timedelta(days=4 if status == "cotto" else 5)).isoformat(),
+                "expiry_estimated": 0,
+                "notes": item.get("notes") or "",
+                "preparation_status": status,
+            },
+        )
+        remaining = available - quantity
+        if remaining <= 0.000001:
+            delete_inventory_item(item_id)
+        else:
+            update_inventory_item(item_id, int(item["item_prior_id"]), item | {
+                "quantity": remaining,
+                "preparation_status": item.get("preparation_status") or "none",
+            })
+        flash(f"Prodotto segnato come {status}: spostato in frigo.", "success")
+        return redirect_inventory_context()
+
     @app.post("/inventory/<int:item_id>/delete")
     def delete_inventory(item_id: int):
         delete_inventory_item(item_id)
@@ -549,6 +592,7 @@ def register_routes(app: Flask) -> None:
             "quantity": new_quantity,
             "unit": new_unit,
             "location": item["location"],
+            "preparation_status": item.get("preparation_status") or "none",
             "expiry_date": item.get("expiry_date"),
             "expiry_estimated": item.get("expiry_estimated") or 0,
             "notes": item.get("notes") or "",
@@ -1433,6 +1477,7 @@ def inventory_form_data(form: Any) -> dict[str, Any]:
         "quantity": quantity,
         "unit": unit,
         "location": location,
+        "preparation_status": clean_text(form.get("preparation_status"), "none"),
         "expiry_date": expiry_date,
         "expiry_estimated": expiry_estimated,
         "notes": clean_text(form.get("notes")),
@@ -1678,6 +1723,8 @@ def validate_inventory_data(data: dict[str, Any]) -> list[str]:
         errors.append("La quantita' deve essere maggiore di zero.")
     if data["location"] not in LOCATIONS:
         errors.append("Scegli frigo o dispensa.")
+    if data.get("preparation_status") not in {"none", "cotto", "aperto"}:
+        errors.append("La modalità di preparazione non è valida.")
     return errors
 
 
@@ -2811,6 +2858,7 @@ def create_inventory_item(
         "quantity": data["quantity"],
         "unit": data["unit"],
         "location": data["location"],
+        "preparation_status": data.get("preparation_status") or "none",
         "expiry_date": data.get("expiry_date"),
         "expiry_estimated": int(data.get("expiry_estimated") or 0),
         "notes": data.get("notes"),
@@ -2854,6 +2902,7 @@ def update_inventory_item(
         "quantity": data["quantity"],
         "unit": data["unit"],
         "location": data["location"],
+        "preparation_status": data.get("preparation_status") or "none",
         "expiry_date": data.get("expiry_date"),
         "expiry_estimated": int(data.get("expiry_estimated") or 0),
         "notes": data.get("notes"),

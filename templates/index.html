@@ -87,6 +87,12 @@
                      data-expiry="{{ item.expiry_date or '' }}"
                      data-created="{{ item.created_at or '' }}">
               <div class="product-media">
+                {% if item.preparation_status and item.preparation_status != 'none' %}
+                  <span class="preparation-badge {{ item.preparation_status }}" title="{{ 'Cotto' if item.preparation_status == 'cotto' else 'Aperto' }}">
+                    <i class="fa-solid {{ 'fa-fire' if item.preparation_status == 'cotto' else 'fa-box-open' }}" aria-hidden="true"></i>
+                    <span class="sr-only">{{ 'Cotto' if item.preparation_status == 'cotto' else 'Aperto' }}</span>
+                  </span>
+                {% endif %}
                 <a href="{{ url_for('edit_inventory_item', item_id=item.id) }}" aria-label="Apri {{ item.name }}">
                 {% if item.picture %}
                   <img src="{{ item.picture }}" alt="{{ item.name }}">
@@ -97,6 +103,9 @@
               </div>
               <div class="item-main">
                 <h3>{{ item.name }}</h3>
+                {% if item.preparation_status and item.preparation_status != 'none' %}
+                  <p class="preparation-label {{ item.preparation_status }}">{{ 'Cotto' if item.preparation_status == 'cotto' else 'Aperto' }}</p>
+                {% endif %}
                 <p>
                   {{ locations[item.location] }}
                   {% if item.category %}
@@ -132,6 +141,7 @@
                 </div>
               </div>
               <div class="row-actions">
+                {% if item.preparation_status == 'none' or not item.preparation_status %}<button class="small-button secondary" type="button" data-open-preparation data-item-id="{{ item.id }}" data-item-name="{{ item.name }}" data-item-quantity="{{ item.quantity|qty }}" data-item-unit="{{ item.unit }}"><i class="fa-solid fa-kitchen-set" aria-hidden="true"></i> Cotto/Aperto</button>{% endif %}
                 <a class="small-button secondary" href="{{ url_for('edit_inventory_item', item_id=item.id) }}"><i class="fa-solid fa-pen" style="margin: 0;" aria-hidden="true"></i></a> <!-- Edit -->
                 <form action="{{ url_for('finish_inventory_item', item_id=item.id, location=selected_location, view=view_mode) }}" method="post" data-inventory-navigation>
                   <button class="small-button" type="submit"><i class="fa-solid fa-check" aria-hidden="true"></i> Finito</button>
@@ -152,6 +162,12 @@
                      data-expiry="{{ item.expiry_date or '' }}"
                      data-created="{{ item.created_at or '' }}">
               <div class="product-media">
+                {% if item.preparation_status and item.preparation_status != 'none' %}
+                  <span class="preparation-badge {{ item.preparation_status }}" title="{{ 'Cotto' if item.preparation_status == 'cotto' else 'Aperto' }}">
+                    <i class="fa-solid {{ 'fa-fire' if item.preparation_status == 'cotto' else 'fa-box-open' }}" aria-hidden="true"></i>
+                    <span class="sr-only">{{ 'Cotto' if item.preparation_status == 'cotto' else 'Aperto' }}</span>
+                  </span>
+                {% endif %}
                 <a href="{{ url_for('edit_inventory_item', item_id=item.id) }}" aria-label="Apri {{ item.name }}">
                 {% if item.picture %}
                   <img src="{{ item.picture }}" alt="{{ item.name }}">
@@ -163,6 +179,9 @@
               <div class="item-main">
                 <div>
                   <h3>{{ item.name }}</h3>
+                  {% if item.preparation_status and item.preparation_status != 'none' %}
+                    <p class="preparation-label {{ item.preparation_status }}">{{ 'Cotto' if item.preparation_status == 'cotto' else 'Aperto' }}</p>
+                  {% endif %}
                   <p>
                     {{ locations[item.location] }}
                     {% if item.category %}
@@ -208,6 +227,7 @@
                 {% endif %}
               </div>
               <div class="row-actions">
+                {% if item.preparation_status == 'none' or not item.preparation_status %}<button class="small-button secondary" type="button" data-open-preparation data-item-id="{{ item.id }}" data-item-name="{{ item.name }}" data-item-quantity="{{ item.quantity|qty }}" data-item-unit="{{ item.unit }}"><i class="fa-solid fa-kitchen-set" aria-hidden="true"></i> Cotto/Aperto</button>{% endif %}
                 <a class="small-button secondary" href="{{ url_for('edit_inventory_item', item_id=item.id) }}"><i class="fa-solid fa-pen" aria-hidden="true"></i> Modifica</a>
                 <a class="small-button secondary" href="{{ url_for('edit_prior', prior_id=item.item_prior_id) }}"><i class="fa-solid fa-sliders" aria-hidden="true"></i> Prior</a>
                 <form action="{{ url_for('finish_inventory_item', item_id=item.id, location=selected_location, view=view_mode) }}" method="post" data-inventory-navigation>
@@ -229,6 +249,26 @@
       </div>
     {% endif %}
   </section>
+
+  <dialog class="preparation-dialog" data-preparation-dialog>
+    <form method="post" data-preparation-form>
+      <h3>Trasforma prodotto</h3>
+      <p data-preparation-description></p>
+      <label>Modalità
+        <select name="preparation_status" data-preparation-status>
+          <option value="cotto">Cotto — scade tra 4 giorni</option>
+          <option value="aperto">Aperto — scade tra 5 giorni</option>
+        </select>
+      </label>
+      <label>Quantità
+        <input name="quantity" type="number" min="0.01" step="0.01" required data-preparation-quantity>
+      </label>
+      <div class="form-actions">
+        <button class="button secondary" type="button" data-preparation-cancel>Annulla</button>
+        <button class="button" type="submit">Conferma e metti in frigo</button>
+      </div>
+    </form>
+  </dialog>
 {% endblock %}
 
 {% block page_scripts %}
