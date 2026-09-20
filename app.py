@@ -529,13 +529,18 @@ def register_routes(app: Flask) -> None:
             flash("La quantità deve essere positiva e non superiore a quella disponibile.", "error")
             return redirect_inventory_context()
 
+        preparation_expiry = date.today() + timedelta(days=4 if status == "cotto" else 5)
+        current_expiry = parse_iso_date(item.get("expiry_date"))
+        if status == "aperto" and current_expiry:
+            preparation_expiry = min(current_expiry, preparation_expiry)
+
         create_inventory_item(
             int(item["item_prior_id"]),
             {
                 "quantity": quantity,
                 "unit": item["unit"],
                 "location": "frigo",
-                "expiry_date": (date.today() + timedelta(days=4 if status == "cotto" else 5)).isoformat(),
+                "expiry_date": preparation_expiry.isoformat(),
                 "expiry_estimated": 0,
                 "notes": item.get("notes") or "",
                 "preparation_status": status,

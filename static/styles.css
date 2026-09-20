@@ -530,9 +530,26 @@ button {
   filter: sepia(.35) saturate(1.35) hue-rotate(150deg);
 }
 
-.preparation-badge {
+.product-media:has(.preparation-badge.cotto)::after,
+.product-media:has(.preparation-badge.aperto)::after {
+  content: "";
   position: absolute;
   z-index: 1;
+  inset: 0;
+  pointer-events: none;
+}
+
+.product-media:has(.preparation-badge.cotto)::after {
+  background: rgba(232, 120, 36, .2);
+}
+
+.product-media:has(.preparation-badge.aperto)::after {
+  background: rgba(60, 168, 216, .2);
+}
+
+.preparation-badge {
+  position: absolute;
+  z-index: 2;
   top: 5px;
   right: 5px;
   display: grid;
