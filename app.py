@@ -574,6 +574,22 @@ def register_routes(app: Flask) -> None:
             return redirect(url_for("index"))
 
         direction = clean_text(request.form.get("direction")).lower()
+        if direction == "edit":
+            try:
+                new_quantity = float(str(request.form.get("quantity", "")).replace(",", "."))
+            except (TypeError, ValueError):
+                new_quantity = 0
+            new_unit = clean_text(request.form.get("unit"), item.get("unit") or "pz")
+            if new_quantity <= 0 or new_unit not in UNITS:
+                error = "Inserisci una quantità positiva e un'unità valida."
+                if is_xhr:
+                    return jsonify({"ok": False, "error": error}), 400
+                flash(error, "error")
+                return redirect(url_for("shopping"))
+            update_shopping_item(item_id, new_quantity, new_unit)
+            if is_xhr:
+                return jsonify({"ok": True, "qty_display": f"{_format_qty(new_quantity)} {new_unit}", "quantity": new_quantity, "unit": new_unit})
+            return redirect(url_for("shopping"))
         if direction not in {"inc", "dec"}:
             if is_xhr:
                 return jsonify({"ok": False, "error": "Azione quantita' non valida."}), 400
@@ -782,6 +798,7 @@ def register_routes(app: Flask) -> None:
             "shopping.html",
             items=items,
             prior_options=list_item_prior_options(),
+            units=UNITS,
         )
 
     @app.post("/shopping/<int:item_id>/purchase")

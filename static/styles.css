@@ -622,6 +622,23 @@ button {
   color: var(--ink) !important;
 }
 
+.quantity-edit-trigger {
+  cursor: pointer;
+  border: 1px solid transparent;
+  background: transparent;
+  font: inherit;
+  padding: 4px 8px;
+  border-radius: 999px;
+}
+.quantity-edit-trigger:hover,
+.quantity-edit-trigger:focus-visible { border-color: var(--line); background: var(--surface-strong); }
+.quantity-edit-dialog { border: 0; border-radius: 14px; padding: 0; max-width: min(92vw, 380px); width: 100%; background: transparent; }
+.quantity-edit-dialog::backdrop { background: rgb(20 35 28 / 45%); }
+.quantity-edit-dialog .form-panel { margin: 0; }
+.dialog-item-name { margin: -2px 0 12px; color: var(--muted); font-weight: 700; }
+.dialog-error { color: var(--danger); font-weight: 700; }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+
 .dot {
   color: #a6b0aa;
   padding: 0 4px;
