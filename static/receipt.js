@@ -29,11 +29,11 @@
     }
 
     idInput.value = option.dataset.id || "";
-    if (quantityInput && option.dataset.typicalQuantity) {
-      quantityInput.value = option.dataset.typicalQuantity;
+    if (quantityInput && option.dataset.suggestedQuantity) {
+      quantityInput.value = option.dataset.suggestedQuantity;
     }
-    if (unitInput && option.dataset.typicalUnit) {
-      unitInput.value = option.dataset.typicalUnit;
+    if (unitInput && option.dataset.suggestedUnit) {
+      unitInput.value = option.dataset.suggestedUnit;
     }
     if (locationInput && option.dataset.defaultLocation) {
       locationInput.value = option.dataset.defaultLocation;

@@ -29,6 +29,8 @@
             data-default-location="{{ prior.default_location or 'dispensa' }}"
             data-typical-quantity="{{ prior.typical_quantity|qty }}"
             data-typical-unit="{{ prior.typical_unit or '' }}"
+            data-suggested-quantity="{{ prior.suggested_quantity|qty }}"
+            data-suggested-unit="{{ prior.suggested_unit or 'pz' }}"
             data-typical-shelf-life-days="{{ prior.typical_shelf_life_days or '' }}">
           </option>
         {% endfor %}
@@ -39,6 +41,26 @@
         <p class="prior-llm-status-text">Analizzo il nuovo prodotto con LLM, attendi...</p>
       </div>
 
+      {% if mode == "edit" %}
+      <div class="field-grid">
+        <label>
+          Quantità in pezzi
+          <input name="quantity_pz" type="number" min="0.01" step="any" value="{{ item.quantity_pz|qty }}">
+        </label>
+        <label>
+          Quantità misurata
+          <input name="measure_quantity" type="number" min="0.01" step="any" value="{{ item.measure_quantity|qty }}" {% if not item.measure_quantity %}placeholder="Non definita"{% endif %}>
+        </label>
+      </div>
+      <label>
+        Unità di misura della quantità misurata
+        <select name="unit" required>
+          {% for u in units if u != 'pz' %}
+            <option value="{{ u }}" {% if item.measure_unit == u or (not item.measure_unit and item.unit == u) %}selected{% endif %}>{{ u }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      {% else %}
       <div class="field-grid">
         <label>
           Quantita'
@@ -57,6 +79,7 @@
           </select>
         </label>
       </div>
+      {% endif %}
 
       <label>
         Andra' in
@@ -74,6 +97,11 @@
 
       {% if mode == "edit" and purchased_at %}
         <p class="field-help">Acquistato il {{ purchased_at|datetime_it }}</p>
+      {% endif %}
+
+      {% if mode == "edit" %}
+        <div class="field-help">Inventario: visualizza <strong>{{ 'pezzi' if item.quantity_display == 'pz' else 'quantità misurata' }}</strong>.</div>
+        <button class="small-button secondary" type="submit" formaction="{{ url_for('toggle_inventory_display', item_id=item.id) }}" formmethod="post"><i class="fa-solid fa-arrows-rotate" aria-hidden="true"></i> Mostra {{ 'quantità misurata' if item.quantity_display == 'pz' else 'pezzi' }}</button>
       {% endif %}
 
       <div class="form-actions">

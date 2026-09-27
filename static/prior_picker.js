@@ -1,7 +1,7 @@
 (() => {
   const mappings = {
-    quantity: "typicalQuantity",
-    unit: "typicalUnit",
+    quantity: "suggestedQuantity",
+    unit: "suggestedUnit",
     location: "defaultLocation",
     target_location: "defaultLocation",
   };
@@ -63,8 +63,11 @@
     }
 
     idInput.value = option.dataset.id || "";
+    const usePieceSuggestion = form.dataset.priorQuantityMode !== "measure";
     Object.entries(mappings).forEach(([fieldName, dataKey]) => {
-      setField(form, fieldName, option.dataset[dataKey] || "");
+      const resolvedKey = fieldName === "quantity" && !usePieceSuggestion ? "typicalQuantity" : dataKey;
+      const resolvedUnit = fieldName === "unit" && !usePieceSuggestion ? "typicalUnit" : resolvedKey;
+      setField(form, fieldName, option.dataset[resolvedUnit] || "");
     });
 
     const expiryField = form.querySelector("[data-prior-expiry]");

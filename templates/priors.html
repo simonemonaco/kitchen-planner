@@ -28,11 +28,13 @@
                    data-category="{{ (item.category or '')|lower }}"
                    data-created="{{ item.created_at or '' }}">
             <div class="product-media">
-              {% if item.picture %}
-                <img src="{{ item.picture }}" alt="{{ item.name }}">
-              {% else %}
-                <span>{{ item.name[:1] }}</span>
-              {% endif %}
+              <a href="{{ url_for('edit_prior', prior_id=item.id) }}" aria-label="Modifica prior {{ item.name }}">
+                {% if item.picture %}
+                  <img src="{{ item.picture }}" alt="{{ item.name }}">
+                {% else %}
+                  <span>{{ item.name[:1] }}</span>
+                {% endif %}
+              </a>
             </div>
             <div class="item-main">
               <h3>{{ item.name }}</h3>
@@ -40,7 +42,7 @@
                 {{ item.category or "Senza categoria" }}
                 {% if item.typical_quantity %}
                   <span class="dot">.</span>
-                  {{ item.typical_quantity|qty }} {{ item.typical_unit }}
+                  {{ item.typical_quantity|qty }} {{ item.typical_unit }} per pezzo · {{ item.typical_quantity_pz|qty }} pz tipici
                 {% endif %}
                 {% if item.typical_shelf_life_days %}
                   <span class="dot">.</span>

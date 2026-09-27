@@ -27,6 +27,8 @@
             data-default-location="{{ prior.default_location or 'dispensa' }}"
             data-typical-quantity="{{ prior.typical_quantity|qty }}"
             data-typical-unit="{{ prior.typical_unit or '' }}"
+            data-suggested-quantity="{{ prior.suggested_quantity|qty }}"
+            data-suggested-unit="{{ prior.suggested_unit or 'pz' }}"
             data-typical-shelf-life-days="{{ prior.typical_shelf_life_days or '' }}">
           </option>
         {% endfor %}
@@ -72,11 +74,13 @@
             <article class="shopping-row">
               <div class="shopping-row-main">
                 <div class="product-media">
-                  {% if item.picture %}
-                    <img src="{{ item.picture }}" alt="{{ item.name }}">
-                  {% else %}
-                    <span>{{ item.name[:1] }}</span>
-                  {% endif %}
+                  <a href="{{ url_for('edit_prior', prior_id=item.item_prior_id) }}" aria-label="Modifica prior {{ item.name }}">
+                    {% if item.picture %}
+                      <img src="{{ item.picture }}" alt="{{ item.name }}">
+                    {% else %}
+                      <span>{{ item.name[:1] }}</span>
+                    {% endif %}
+                  </a>
                 </div>
                 <div class="item-main" aria-label="{{ item.name }}">
                   <h3>{{ item.name }}</h3>

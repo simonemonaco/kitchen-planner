@@ -17,6 +17,11 @@
 
       <div class="field-grid">
         <label>
+          Pezzi tipici da acquistare
+          <input name="typical_quantity_pz" type="number" min="0.01" step="any" value="{{ (item.typical_quantity_pz if item.typical_quantity_pz is not none else 1)|qty }}" required>
+          <span class="field-help">Numero di pezzi suggerito quando aggiungi il prodotto.</span>
+        </label>
+        <label>
           Categoria
           <input name="category" value="{{ item.category or 'Altro' }}" list="category-options" required autocomplete="off">
         </label>
@@ -29,7 +34,7 @@
 
       <div class="field-grid">
         <label>
-          Quantita' tipica
+          Quantità per pezzo
           <div class="qty-control" data-qty-control data-qty-unit-selector="[name='typical_unit']">
             <button type="button" class="small-button secondary icon-only" data-qty-action="decrease" aria-label="Diminuisci quantita' tipica"><i class="fa-solid fa-minus" aria-hidden="true"></i></button>
             <input name="typical_quantity" type="number" min="0.01" step="0.01" value="{{ item.typical_quantity|qty }}" data-qty-input>
@@ -37,7 +42,7 @@
           </div>
         </label>
         <label>
-          Unita' tipica
+          Unità della quantità per pezzo
           <select name="typical_unit" data-prior-field="typical_unit">
             {% for u in units %}
               <option value="{{ u }}" {% if (item.typical_unit or 'pz') == u %}selected{% endif %}>{{ u }}</option>
@@ -50,6 +55,22 @@
         Scadenza tipica in giorni
         <input name="typical_shelf_life_days" type="number" min="1" step="1" value="{{ item.typical_shelf_life_days or '' }}">
       </label>
+
+      <div class="field-grid">
+        <label>
+          Quantità minima di riordino
+          <input name="minimum_quantity" type="number" min="0" step="any" value="{{ (item.minimum_quantity if item.minimum_quantity is not none else 0)|qty }}">
+          <span class="field-help">A 0 mantiene il comportamento attuale.</span>
+        </label>
+        <label>
+          Unità della quantità minima
+          <select name="minimum_unit">
+            {% for u in units %}
+              <option value="{{ u }}" {% if (item.minimum_unit or 'pz') == u %}selected{% endif %}>{{ u }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      </div>
 
       <label>
         Andra' in

@@ -10,7 +10,7 @@
       {% for ingredient in recipe.ingredients %}
         <div class="ingredient-simple" data-original-quantity="{{ ingredient.quantity }}" data-quantity-is-qb="{{ ingredient.quantity_is_qb }}">
           <span class="ingredient-info">{% if ingredient.picture %}<img class="ingredient-icon" src="{{ ingredient.picture }}" alt="">{% else %}<span class="ingredient-icon ingredient-icon-placeholder" aria-hidden="true">{{ ingredient.name[:1] }}</span>{% endif %}<span>{{ ingredient.name }}</span></span>
-          <strong class="ingredient-quantity">{% if ingredient.quantity_is_qb %}q.b.{% else %}{{ ingredient.quantity|qty }} {{ ingredient.unit }}{% endif %}</strong>
+          <strong class="ingredient-quantity">{% if ingredient.quantity_is_qb %}q.b.{% else %}{{ ingredient.quantity|qty }} {{ ingredient.unit }}{% endif %}{% if ingredient.notes %} <span class="ingredient-note">({{ ingredient.notes }})</span>{% endif %}</strong>
         </div>
       {% endfor %}
     </div>

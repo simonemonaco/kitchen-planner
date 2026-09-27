@@ -118,7 +118,7 @@
                     <input type="hidden" name="direction" value="dec">
                     <button class="small-button secondary icon-only" type="submit" aria-label="Diminuisci quantita'"><i class="fa-solid fa-minus" aria-hidden="true"></i></button>
                   </form>
-                  <span class="quantity-pill" data-qty-pill>{{ item.quantity|qty }} {{ item.unit }}</span>
+                  <button class="quantity-pill quantity-edit-trigger" type="button" data-qty-pill data-edit-quantity data-edit-inventory data-item-id="{{ item.id }}" data-item-name="{{ item.name }}" data-item-quantity="{{ item.quantity }}" data-item-unit="{{ item.unit }}">{{ item.quantity|qty }} {{ item.unit }}</button>
                   <form action="{{ url_for('adjust_inventory_quantity', item_id=item.id, location=selected_location, view=view_mode) }}" method="post" data-qty-form>
                     <input type="hidden" name="direction" value="inc">
                     <button class="small-button secondary icon-only" type="submit" aria-label="Aumenta quantita'"><i class="fa-solid fa-plus" aria-hidden="true"></i></button>
@@ -199,7 +199,7 @@
                     <input type="hidden" name="direction" value="dec">
                     <button class="small-button secondary icon-only" type="submit" aria-label="Diminuisci quantita'"><i class="fa-solid fa-minus" aria-hidden="true"></i></button>
                   </form>
-                  <span class="quantity-pill" data-qty-pill>{{ item.quantity|qty }} {{ item.unit }}</span>
+                  <button class="quantity-pill quantity-edit-trigger" type="button" data-qty-pill data-edit-quantity data-edit-inventory data-item-id="{{ item.id }}" data-item-name="{{ item.name }}" data-item-quantity="{{ item.quantity }}" data-item-unit="{{ item.unit }}">{{ item.quantity|qty }} {{ item.unit }}</button>
                   <form action="{{ url_for('adjust_inventory_quantity', item_id=item.id, location=selected_location, view=view_mode) }}" method="post" data-qty-form>
                     <input type="hidden" name="direction" value="inc">
                     <button class="small-button secondary icon-only" type="submit" aria-label="Aumenta quantita'"><i class="fa-solid fa-plus" aria-hidden="true"></i></button>
@@ -207,7 +207,7 @@
                 </div>
                 <div class="badges">
                   {% if item.typical_quantity %}
-                    <span class="badge muted">Tipico {{ item.typical_quantity|qty }} {{ item.typical_unit }}</span>
+                    <span class="badge muted">Per pezzo: {{ item.typical_quantity|qty }} {{ item.typical_unit }}</span>
                   {% endif %}
                   {% if item.expiry_date %}
                     {% if item.expiry_date < today %}
@@ -266,6 +266,22 @@
       <div class="form-actions">
         <button class="button secondary" type="button" data-preparation-cancel>Annulla</button>
         <button class="button" type="submit">Conferma e metti in frigo</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="quantity-edit-dialog" data-quantity-dialog>
+    <form method="dialog" class="form-panel compact" data-quantity-edit-form>
+      <h3>Modifica quantità</h3>
+      <p class="dialog-item-name" data-edit-item-name></p>
+      <label>Quantità <input type="number" name="quantity" min="0.01" step="any" required data-edit-quantity-input></label>
+      <label data-edit-unit-wrap>Unità di misura
+        <select name="unit" required data-edit-unit-input>{% for u in units %}<option value="{{ u }}">{{ u }}</option>{% endfor %}</select>
+      </label>
+      <p class="dialog-error" hidden data-edit-error></p>
+      <div class="dialog-actions">
+        <button class="small-button secondary" type="button" data-edit-cancel>Annulla</button>
+        <button class="button" type="submit">Salva</button>
       </div>
     </form>
   </dialog>

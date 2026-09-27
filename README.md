@@ -24,7 +24,7 @@ Webapp Flask per gestire i prodotti disponibili in frigo e dispensa, con scadenz
 - Agenda pasti (`/meals`) con pasti nominabili, data, momento, persone e piatti collegati.
 - Ricettario (`/settings/recipes`) ricercabile, ricette con ingredienti/quantità, foto via link o upload ImgBB e storico delle preparazioni.
 - Dettaglio pasto con quantità scalate, aggregazione degli ingredienti, stato della dispensa e collegamento diretto alla lista della spesa.
-- Categoria prior vincolata a: Carne, Pesce, Uova, Latticini, Formaggi, Cereali, Legumi, Pasta, Verdura, Frutta, Dolci, Altro.
+- Categoria prior vincolata a: Carne, Pesce, Uova, Latticini, Formaggi, Cereali, Legumi, Pasta, Verdura, Frutta, Dolci, Spezie, Altro.
 
 ## Database
 

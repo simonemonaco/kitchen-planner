@@ -18,7 +18,9 @@
           data-id="{{ prior.id }}"
           data-default-location="{{ prior.default_location or 'dispensa' }}"
           data-typical-quantity="{{ prior.typical_quantity|qty }}"
-          data-typical-unit="{{ prior.typical_unit or '' }}">
+          data-typical-unit="{{ prior.typical_unit or '' }}"
+          data-suggested-quantity="{{ prior.suggested_quantity|qty }}"
+          data-suggested-unit="{{ prior.suggested_unit or 'pz' }}">
         </option>
       {% endfor %}
     </datalist>

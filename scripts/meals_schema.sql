@@ -25,11 +25,13 @@ create table if not exists public.recipe_ingredients (
     quantity double precision not null default 0,
     quantity_is_qb boolean not null default false,
     unit text not null default 'pz',
+    notes text,
     sort_order integer not null default 0
 );
 
 -- Support existing installations and the special "q.b." quantity.
 alter table public.recipe_ingredients add column if not exists quantity_is_qb boolean not null default false;
+alter table public.recipe_ingredients add column if not exists notes text;
 alter table public.recipe_ingredients drop constraint if exists recipe_ingredients_quantity_check;
 alter table public.recipe_ingredients add constraint recipe_ingredients_quantity_check check (quantity_is_qb or quantity > 0);
 
@@ -56,6 +58,7 @@ create table if not exists public.meal_recipes (
 );
 
 alter table public.meal_recipes add column if not exists people_count integer not null default 2;
+alter table public.meal_recipes add column if not exists inventory_consumed_at timestamptz;
 update public.meal_recipes mr set people_count = m.people_count
 from public.meals m where m.id = mr.meal_id;
 alter table public.meal_recipes drop constraint if exists meal_recipes_people_count_check;
@@ -76,8 +79,11 @@ create table if not exists public.meal_consumptions (
     item_snapshot jsonb not null,
     consumed_quantity double precision not null,
     consumed_unit text not null,
+    recipe_id bigint references public.recipes(id),
     created_at timestamptz not null default now()
 );
+
+alter table public.meal_consumptions add column if not exists recipe_id bigint references public.recipes(id);
 
 -- Modello ricorrente manuale: viene copiato nella settimana solo su richiesta.
 create table if not exists public.meal_defaults (
@@ -170,6 +176,7 @@ create index if not exists idx_meals_date on public.meals(meal_date, meal_type);
 create index if not exists idx_meal_recipes_meal on public.meal_recipes(meal_id, sort_order);
 create index if not exists idx_recipe_history_recipe on public.recipe_history(recipe_id, cooked_on desc);
 create index if not exists idx_meal_consumptions_meal on public.meal_consumptions(meal_id);
+create index if not exists idx_meal_consumptions_recipe on public.meal_consumptions(meal_id, recipe_id);
 create index if not exists idx_meal_defaults_slot on public.meal_defaults(weekday, meal_type);
 create index if not exists idx_meal_default_recipes_default on public.meal_default_recipes(meal_default_id, sort_order);
 create index if not exists idx_menu_plan_meals_plan on public.menu_plan_meals(menu_plan_id, meal_date, meal_type);

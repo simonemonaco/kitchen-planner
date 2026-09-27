@@ -50,7 +50,9 @@ CATEGORIES = [
     "Legumi",
     "Pasta",
     "Dolci",
+    "Spezie",
     "Bibite",
+    "Alcolici",
     "Altro",
 ]
 
@@ -469,6 +471,18 @@ def register_routes(app: Flask) -> None:
             purchased_at=purchased_at,
         )
 
+    @app.post("/inventory/<int:item_id>/toggle-display")
+    def toggle_inventory_display(item_id: int):
+        item = get_inventory_item(item_id)
+        if not item:
+            flash("Prodotto non trovato.", "error")
+            return redirect(url_for("index"))
+        prior = get_item_prior(int(item["item_prior_id"])) or {}
+        current = prior.get("inventory_display_unit") or "measure"
+        update_item_prior(int(item["item_prior_id"]), {"inventory_display_unit": "pz" if current != "pz" else "measure"})
+        flash("Visualizzazione quantità aggiornata.", "success")
+        return redirect(url_for("edit_inventory_item", item_id=item_id))
+
     @app.post("/inventory/<int:item_id>/finish")
     def finish_inventory_item(item_id: int):
         item = get_inventory_item(item_id)
@@ -476,15 +490,13 @@ def register_routes(app: Flask) -> None:
             flash("Prodotto non trovato.", "error")
             return redirect(url_for("index"))
 
-        # If another instance of the same prior is still available, the product
-        # is not finished from the household's point of view: do not replenish it.
+        prior = get_item_prior(int(item["item_prior_id"])) or {}
         other_inventory = (
             get_supabase().table("inventory_items")
-            .select("id")
+            .select("*")
             .eq("item_prior_id", item["item_prior_id"])
             .neq("id", item_id)
             .gt("quantity", 0)
-            .limit(1)
             .execute()
         ).data
         existing_shopping = (
@@ -494,17 +506,33 @@ def register_routes(app: Flask) -> None:
             .limit(1)
             .execute()
         ).data
-        if not other_inventory and not existing_shopping:
+        minimum_quantity = float(prior.get("minimum_quantity") or 0)
+        minimum_unit = clean_text(prior.get("minimum_unit"), "pz")
+        if minimum_quantity > 0:
+            current_stock = sum(
+                inventory_quantity_in_unit(row, prior, minimum_unit)
+                for row in other_inventory
+            )
+            shopping_quantity = minimum_quantity - current_stock
+            shopping_unit = minimum_unit
+        else:
+            # Soglia predefinita: comportamento storico, si riordina l'ultima
+            # quantità finita solo quando non restano altre istanze.
+            shopping_quantity = max(float(item.get("quantity") or 1), 1) if not other_inventory else 0
+            shopping_unit = item.get("unit") or "pz"
+
+        should_replenish = shopping_quantity > 0.000001 and not existing_shopping
+        if should_replenish:
             add_or_increment_shopping_item(
                 item_prior_id=item["item_prior_id"],
-                quantity=max(float(item["quantity"] or 1), 1),
-                unit=item["unit"],
+                quantity=shopping_quantity,
+                unit=shopping_unit,
                 target_location=item["location"],
                 notes=item["notes"],
             )
         delete_inventory_item(item_id)
         flash(
-            "Prodotto finito: " + ("la lista della spesa è stata aggiornata." if not other_inventory and not existing_shopping else "non serve aggiungerlo alla lista della spesa."),
+            "Prodotto finito: " + ("la lista della spesa è stata aggiornata." if should_replenish else "non serve aggiungerlo alla lista della spesa."),
             "success",
         )
         return redirect_inventory_context()
@@ -550,10 +578,18 @@ def register_routes(app: Flask) -> None:
         if remaining <= 0.000001:
             delete_inventory_item(item_id)
         else:
-            update_inventory_item(item_id, int(item["item_prior_id"]), item | {
+            remaining_data = item | {
                 "quantity": remaining,
                 "preparation_status": item.get("preparation_status") or "none",
-            })
+            }
+            if is_piece_unit(item.get("unit")):
+                remaining_data["quantity_pz"] = remaining
+                remaining_data["measure_quantity"], remaining_data["measure_unit"] = piece_measure_quantity(remaining, get_item_prior(int(item["item_prior_id"])))
+            else:
+                remaining_data["measure_quantity"] = remaining
+                remaining_data["measure_unit"] = item.get("unit")
+                remaining_data["quantity_pz"] = piece_quantity_from_measure(remaining, item.get("unit"), get_item_prior(int(item["item_prior_id"])))
+            update_inventory_item(item_id, int(item["item_prior_id"]), remaining_data)
         flash(f"Prodotto segnato come {status}: spostato in frigo.", "success")
         return redirect_inventory_context()
 
@@ -579,17 +615,30 @@ def register_routes(app: Flask) -> None:
                 new_quantity = float(str(request.form.get("quantity", "")).replace(",", "."))
             except (TypeError, ValueError):
                 new_quantity = 0
-            new_unit = clean_text(request.form.get("unit"), item.get("unit") or "pz")
+            # Nell'inventario si modifica solo il numero: l'unità è quella
+            # attualmente visibile (pezzi oppure quantità misurata del prior).
+            new_unit = item.get("unit") or "pz"
             if new_quantity <= 0 or new_unit not in UNITS:
                 error = "Inserisci una quantità positiva e un'unità valida."
                 if is_xhr:
                     return jsonify({"ok": False, "error": error}), 400
                 flash(error, "error")
-                return redirect(url_for("shopping"))
-            update_shopping_item(item_id, new_quantity, new_unit)
+                return redirect(url_for("index"))
+            prior = get_item_prior(int(item["item_prior_id"]))
+            payload = item | {"quantity": new_quantity, "unit": new_unit}
+            if is_piece_unit(new_unit):
+                payload["quantity_pz"] = new_quantity
+                payload["measure_quantity"], payload["measure_unit"] = piece_measure_quantity(new_quantity, prior)
+            else:
+                payload["measure_quantity"] = new_quantity
+                payload["measure_unit"] = item.get("measure_unit") or new_unit
+                payload["quantity_pz"] = piece_quantity_from_measure(new_quantity, payload["measure_unit"], prior)
+            old_quantity = float(item.get("quantity") or 0)
+            update_inventory_item(item_id, int(item["item_prior_id"]), payload, quantity_delta=new_quantity - old_quantity)
             if is_xhr:
-                return jsonify({"ok": True, "qty_display": f"{_format_qty(new_quantity)} {new_unit}", "quantity": new_quantity, "unit": new_unit})
-            return redirect(url_for("shopping"))
+                today_change = get_today_quantity_change(item_id, new_unit)
+                return jsonify({"ok": True, "qty_display": f"{_format_qty(new_quantity)} {new_unit}", "quantity": new_quantity, "unit": new_unit, "today_quantity_change": today_change, "today_quantity_change_display": f"{_format_qty(abs(today_change))} {new_unit}"})
+            return redirect(url_for("index", location=request.args.get("location", ""), view=request.args.get("view", "")))
         if direction not in {"inc", "dec"}:
             if is_xhr:
                 return jsonify({"ok": False, "error": "Azione quantita' non valida."}), 400
@@ -612,6 +661,8 @@ def register_routes(app: Flask) -> None:
         payload = {
             "quantity": new_quantity,
             "unit": new_unit,
+            "quantity_pz": new_quantity if is_piece_unit(new_unit) else piece_quantity_from_measure(new_quantity, new_unit, get_item_prior(int(item["item_prior_id"]))),
+            "measure_quantity": (piece_measure_quantity(new_quantity, get_item_prior(int(item["item_prior_id"])))[0] if is_piece_unit(new_unit) else new_quantity),
             "location": item["location"],
             "preparation_status": item.get("preparation_status") or "none",
             "expiry_date": item.get("expiry_date"),
@@ -876,6 +927,22 @@ def register_routes(app: Flask) -> None:
             return redirect(url_for("shopping"))
 
         direction = clean_text(request.form.get("direction")).lower()
+        if direction == "edit":
+            try:
+                new_quantity = float(str(request.form.get("quantity", "")).replace(",", "."))
+            except (TypeError, ValueError):
+                new_quantity = 0
+            new_unit = clean_text(request.form.get("unit"), item.get("unit") or "pz")
+            if new_quantity <= 0 or new_unit not in UNITS:
+                error = "Inserisci una quantità positiva e un'unità valida."
+                if is_xhr:
+                    return jsonify({"ok": False, "error": error}), 400
+                flash(error, "error")
+                return redirect(url_for("shopping"))
+            update_shopping_item(item_id, new_quantity, new_unit)
+            if is_xhr:
+                return jsonify({"ok": True, "qty_display": f"{_format_qty(new_quantity)} {new_unit}", "quantity": new_quantity, "unit": new_unit})
+            return redirect(url_for("shopping"))
         if direction not in {"inc", "dec"}:
             if is_xhr:
                 return jsonify({"ok": False, "error": "Azione non valida."}), 400
@@ -995,6 +1062,45 @@ def register_routes(app: Flask) -> None:
         flash("Piatto aggiunto al meal.", "success")
         return redirect(url_for("meal_detail", meal_id=meal_id))
 
+    @app.post("/meals/<int:meal_id>/recipes/<int:recipe_id>/people")
+    def update_meal_recipe_people(meal_id: int, recipe_id: int):
+        meal = get_meal(meal_id)
+        if not meal:
+            flash("Pasto non trovato.", "error")
+            return redirect(url_for("meals_agenda"))
+        if not any(int(recipe.get("id")) == recipe_id for recipe in meal.get("recipes", []) if recipe):
+            flash("Piatto non associato a questo meal.", "error")
+            return redirect(url_for("meal_detail", meal_id=meal_id))
+
+        people_count = parse_optional_int(request.form.get("people_count"))
+        if not people_count or people_count <= 0:
+            flash("Il numero di persone della ricetta deve essere maggiore di zero.", "error")
+            return redirect(url_for("meal_detail", meal_id=meal_id))
+
+        get_supabase().table("meal_recipes").update({"people_count": people_count}).eq("meal_id", meal_id).eq("recipe_id", recipe_id).execute()
+        flash("Numero di persone aggiornato.", "success")
+        return redirect(url_for("meal_detail", meal_id=meal_id))
+
+    @app.post("/meals/<int:meal_id>/recipes/<int:recipe_id>/consume")
+    def consume_meal_recipe(meal_id: int, recipe_id: int):
+        meal = get_meal(meal_id)
+        if not meal:
+            flash("Pasto non trovato.", "error")
+            return redirect(url_for("meals_agenda"))
+
+        recipe = next((recipe for recipe in meal.get("recipes", []) if recipe and int(recipe["id"]) == recipe_id), None)
+        if not recipe:
+            flash("Piatto non associato a questo pasto.", "error")
+            return redirect(url_for("meal_detail", meal_id=meal_id))
+        if recipe.get("inventory_consumed_at"):
+            flash("Gli ingredienti di questo piatto sono già stati sottratti dall'inventario.", "error")
+            return redirect(url_for("meal_detail", meal_id=meal_id))
+
+        consume_meal_ingredients(meal, recipe_id=recipe_id)
+        get_supabase().table("meal_recipes").update({"inventory_consumed_at": utc_now()}).eq("meal_id", meal_id).eq("recipe_id", recipe_id).execute()
+        flash(f"Ingredienti di {recipe['name']} sottratti dall'inventario.", "success")
+        return redirect(url_for("meal_detail", meal_id=meal_id))
+
     @app.post("/meals/<int:meal_id>/recipes/<int:recipe_id>/remove")
     def remove_meal_recipe(meal_id: int, recipe_id: int):
         meal = get_meal(meal_id)
@@ -1054,7 +1160,6 @@ def register_routes(app: Flask) -> None:
             flash("Questo pasto è già nello storico.", "error")
             return redirect(url_for("meal_detail", meal_id=meal_id))
         supabase = get_supabase()
-        consume_meal_ingredients(meal)
         for recipe in meal.get("recipes", []):
             supabase.table("recipe_history").upsert({"recipe_id": recipe["id"], "cooked_on": meal["meal_date"]}, on_conflict="recipe_id,cooked_on").execute()
         supabase.table("meals").update({"completed_at": utc_now(), "updated_at": utc_now()}).eq("id", meal_id).execute()
@@ -1074,6 +1179,7 @@ def register_routes(app: Flask) -> None:
             return redirect(url_for("meals_history"))
         restore_meal_ingredients(meal)
         supabase = get_supabase()
+        supabase.table("meal_recipes").update({"inventory_consumed_at": None}).eq("meal_id", meal_id).execute()
         for recipe in meal.get("recipes", []):
             supabase.table("recipe_history").delete().eq("recipe_id", recipe["id"]).eq("cooked_on", meal["meal_date"]).execute()
         if action == "reschedule":
@@ -1183,7 +1289,10 @@ def register_routes(app: Flask) -> None:
                 "category": data.get("category"),
                 "typical_quantity": data.get("typical_quantity"),
                 "typical_unit": data.get("typical_unit") or "pz",
+                "typical_quantity_pz": data.get("typical_quantity_pz", 1),
                 "typical_shelf_life_days": data.get("typical_shelf_life_days"),
+                "minimum_quantity": data.get("minimum_quantity", 0),
+                "minimum_unit": data.get("minimum_unit") or "pz",
                 "default_location": data.get("default_location") or "dispensa",
                 "picture": data.get("picture") or "",
                 "notes": data.get("notes") or "",
@@ -1343,6 +1452,8 @@ def empty_inventory_form() -> dict[str, Any]:
         "name": "",
         "quantity": 1,
         "unit": "pz",
+        "quantity_pz": 1,
+        "measure_quantity": "",
         "location": "dispensa",
         "expiry_date": "",
         "notes": "",
@@ -1483,8 +1594,10 @@ def inventory_form_data(form: Any) -> dict[str, Any]:
     )
     if expiry_date and form.get("expiry_estimated") == "1":
         expiry_estimated = 1
-    quantity = parse_quantity(form.get("quantity"))
     unit = clean_text(form.get("unit"), "pz")
+    quantity = parse_quantity(form.get("quantity"))
+    quantity_pz = parse_optional_quantity(form.get("quantity_pz"))
+    measure_quantity = parse_optional_quantity(form.get("measure_quantity"))
     location = form.get("location", "dispensa")
     return {
         "item_prior_id": parse_optional_int(form.get("item_prior_id")),
@@ -1498,6 +1611,8 @@ def inventory_form_data(form: Any) -> dict[str, Any]:
         "prior_notes": "",
         "quantity": quantity,
         "unit": unit,
+        "quantity_pz": quantity_pz,
+        "measure_quantity": measure_quantity,
         "location": location,
         "preparation_status": clean_text(form.get("preparation_status"), "none"),
         "expiry_date": expiry_date,
@@ -1730,9 +1845,12 @@ def prior_form_data(form: Any) -> dict[str, Any]:
         "category": normalize_category(form.get("category")),
         "typical_quantity": parse_optional_quantity(form.get("typical_quantity")),
         "typical_unit": clean_text(form.get("typical_unit"), "pz"),
+        "typical_quantity_pz": parse_optional_quantity(form.get("typical_quantity_pz")) or 1,
         "typical_shelf_life_days": parse_optional_int(
             form.get("typical_shelf_life_days")
         ),
+        "minimum_quantity": parse_quantity(form.get("minimum_quantity"), 0),
+        "minimum_unit": clean_text(form.get("minimum_unit"), "pz"),
         "default_location": form.get("default_location", "dispensa"),
         "picture": picture,
         "notes": clean_text(form.get("notes")),
@@ -1767,6 +1885,12 @@ def validate_prior_data(data: dict[str, Any]) -> list[str]:
         errors.append("Scegli una categoria tra quelle disponibili.")
     if data.get("typical_quantity") is not None and data["typical_quantity"] <= 0:
         errors.append("La quantita' tipica deve essere maggiore di zero.")
+    if data.get("typical_quantity_pz", 1) <= 0:
+        errors.append("La quantita' tipica in pezzi deve essere maggiore di zero.")
+    if data.get("minimum_quantity", 0) < 0:
+        errors.append("La quantità minima non può essere negativa.")
+    if data.get("minimum_unit", "pz") not in UNITS:
+        errors.append("L'unità della quantità minima non è valida.")
     if data.get("default_location") and data["default_location"] not in LOCATIONS:
         errors.append("La destinazione predefinita non e' valida.")
     return errors
@@ -1841,7 +1965,10 @@ def ensure_item_prior(
         "category": prior_data.get("category"),
         "typical_quantity": prior_data.get("typical_quantity"),
         "typical_unit": prior_data.get("typical_unit"),
+        "typical_quantity_pz": prior_data.get("typical_quantity_pz", 1),
         "typical_shelf_life_days": prior_data.get("typical_shelf_life_days"),
+        "minimum_quantity": prior_data.get("minimum_quantity", 0),
+        "minimum_unit": prior_data.get("minimum_unit", "pz"),
         "default_location": prior_data.get("default_location"),
         "picture": prior_data.get("picture"),
         "notes": prior_data.get("notes"),
@@ -1859,10 +1986,14 @@ def merge_prior_data(current: dict[str, Any], incoming: dict[str, Any]) -> dict[
         "category": incoming.get("category") or current.get("category"),
         "typical_quantity": incoming.get("typical_quantity") or current.get("typical_quantity"),
         "typical_unit": incoming.get("typical_unit") or current.get("typical_unit"),
+        "typical_quantity_pz": incoming.get("typical_quantity_pz") if incoming.get("typical_quantity_pz") is not None else current.get("typical_quantity_pz", 1),
         "typical_shelf_life_days": incoming.get("typical_shelf_life_days")
         or current.get("typical_shelf_life_days"),
+        "minimum_quantity": incoming["minimum_quantity"] if incoming.get("minimum_quantity") is not None else current.get("minimum_quantity", 0),
+        "minimum_unit": incoming.get("minimum_unit") or current.get("minimum_unit") or "pz",
         "default_location": incoming.get("default_location") or current.get("default_location"),
         "picture": incoming.get("picture") or current.get("picture"),
+        "inventory_display_unit": incoming.get("inventory_display_unit") or current.get("inventory_display_unit") or "measure",
         
         "notes": incoming.get("prior_notes") or current.get("notes"),
     }
@@ -1902,9 +2033,13 @@ def update_item_prior(prior_id: int, data: dict[str, Any]) -> None:
         "category": value("category"),
         "typical_quantity": value("typical_quantity"),
         "typical_unit": value("typical_unit"),
+        "typical_quantity_pz": value("typical_quantity_pz") if value("typical_quantity_pz") is not None else 1,
         "typical_shelf_life_days": value("typical_shelf_life_days"),
+        "minimum_quantity": value("minimum_quantity") if value("minimum_quantity") is not None else 0,
+        "minimum_unit": value("minimum_unit") or "pz",
         "default_location": value("default_location"),
         "picture": value("picture"),
+        "inventory_display_unit": value("inventory_display_unit") or "measure",
         
         "notes": value("notes"),
         "updated_at": utc_now(),
@@ -1983,9 +2118,22 @@ def list_item_priors(query: str = "") -> list[dict[str, Any]]:
 
 def list_item_prior_options() -> list[dict[str, Any]]:
     response = get_supabase().table("item_prior").select(
-        "id,name,category,typical_quantity,typical_unit,typical_shelf_life_days,default_location,picture,notes"
+        "id,name,category,typical_quantity,typical_unit,typical_quantity_pz,typical_shelf_life_days,minimum_quantity,minimum_unit,default_location,picture,notes,inventory_display_unit"
     ).execute()
-    return sorted(response.data or [], key=lambda row: (row.get("name") or "").casefold())
+    priors = response.data or []
+    if not priors:
+        return []
+    history = get_supabase().table("items_history").select(
+        "item_prior_id,quantity,unit,purchased_at"
+    ).in_("item_prior_id", [int(row["id"]) for row in priors]).order("purchased_at", desc=True).execute().data or []
+    latest_by_prior: dict[int, dict[str, Any]] = {}
+    for row in history:
+        latest_by_prior.setdefault(int(row["item_prior_id"]), row)
+    for prior in priors:
+        latest = latest_by_prior.get(int(prior["id"]))
+        prior["suggested_quantity"] = latest.get("quantity") if latest else (prior.get("typical_quantity_pz") or 1)
+        prior["suggested_unit"] = latest.get("unit") if latest else "pz"
+    return sorted(priors, key=lambda row: (row.get("name") or "").casefold())
 
 
 def empty_meal_form() -> dict[str, Any]:
@@ -2111,7 +2259,7 @@ def empty_recipe_form() -> dict[str, Any]:
 
 
 def empty_ingredient() -> dict[str, Any]:
-    return {"name": "", "quantity": 1, "quantity_is_qb": False, "unit": "pz", "item_prior_id": ""}
+    return {"name": "", "quantity": 1, "quantity_is_qb": False, "unit": "pz", "notes": "", "item_prior_id": ""}
 
 
 def upload_ibb_image(file_storage: Any) -> str | None:
@@ -2161,6 +2309,7 @@ def recipe_form_data(form: Any) -> tuple[dict[str, Any], list[dict[str, Any]]]:
             "quantity": quantity or 0,
             "quantity_is_qb": quantity_is_qb,
             "unit": clean_text(form.get(f"ingredient_unit_{raw_id}"), "pz"),
+            "notes": clean_text(form.get(f"ingredient_notes_{raw_id}")),
             "item_prior_id": parse_optional_int(form.get(f"ingredient_prior_id_{raw_id}")),
         })
     return {
@@ -2211,7 +2360,7 @@ def save_recipe_ingredients(recipe_id: int, ingredients: list[dict[str, Any]]) -
             "name": ingredient["name"], "category": "Altro", "typical_quantity": ingredient["quantity"],
             "typical_unit": ingredient["unit"], "default_location": "dispensa", "picture": "", "prior_notes": "",
         }, existing_prior_id=ingredient.get("item_prior_id"), fetch_picture=False, update_existing=False)
-        rows.append({"recipe_id": recipe_id, "item_prior_id": prior_id, "quantity": ingredient["quantity"], "quantity_is_qb": bool(ingredient.get("quantity_is_qb")), "unit": ingredient["unit"], "sort_order": order})
+        rows.append({"recipe_id": recipe_id, "item_prior_id": prior_id, "quantity": ingredient["quantity"], "quantity_is_qb": bool(ingredient.get("quantity_is_qb")), "unit": ingredient["unit"], "notes": ingredient.get("notes") or "", "sort_order": order})
     if rows:
         supabase.table("recipe_ingredients").insert(rows).execute()
 
@@ -2322,23 +2471,126 @@ def get_meal(meal_id: int) -> dict[str, Any] | None:
     if not response.data:
         return None
     meal = response.data[0]
-    recipe_links = get_supabase().table("meal_recipes").select("recipe_id,people_count").eq("meal_id", meal_id).order("sort_order").execute().data or []
+    recipe_links = get_supabase().table("meal_recipes").select("recipe_id,people_count,inventory_consumed_at").eq("meal_id", meal_id).order("sort_order").execute().data or []
     recipe_ids = [int(row["recipe_id"]) for row in recipe_links]
     meal["recipes"] = [get_recipe(recipe_id) for recipe_id in recipe_ids]
     for recipe, link in zip(meal["recipes"], recipe_links):
         if recipe:
             recipe["people_count"] = int(link.get("people_count") or meal["people_count"] or 2)
+            recipe["inventory_consumed_at"] = link.get("inventory_consumed_at")
     meal["meal_type_label"] = MEAL_TYPES.get(meal["meal_type"], meal["meal_type"])
     return meal
 
 
 def unit_factor(unit: str) -> tuple[str, float]:
     normalized = clean_text(unit, "pz").casefold()
-    if normalized == "kg":
+    # Per il confronto delle ricette assumiamo densità 1: kg/L e g/ml
+    # appartengono quindi alla stessa scala (come richiesto dal dominio).
+    if normalized in {"kg", "l"}:
         return "g", 1000.0
-    if normalized == "l":
-        return "ml", 1000.0
+    if normalized in {"g", "ml"}:
+        return "g", 1.0
     return normalized, 1.0
+
+
+MEASURE_UNITS = {"g", "ml", "l", "kg"}
+
+
+def is_piece_unit(unit: str | None) -> bool:
+    return clean_text(unit, "pz").casefold() == "pz"
+
+
+def piece_measure_quantity(quantity_pz: float, prior: dict[str, Any] | None) -> tuple[float | None, str | None]:
+    """Return the measured quantity represented by pieces of a prior."""
+    if not prior or is_piece_unit(prior.get("typical_unit")):
+        return None, None
+    typical_quantity = parse_optional_quantity(prior.get("typical_quantity"))
+    typical_unit = clean_text(prior.get("typical_unit"))
+    if not typical_quantity or typical_unit not in MEASURE_UNITS:
+        return None, None
+    return quantity_pz * typical_quantity, typical_unit
+
+
+def piece_quantity_from_measure(quantity: float, unit: str, prior: dict[str, Any] | None) -> float | None:
+    """Convert a measured amount to pieces when the prior defines one piece."""
+    if not prior or is_piece_unit(prior.get("typical_unit")):
+        return None
+    typical_quantity = parse_optional_quantity(prior.get("typical_quantity"))
+    typical_unit = clean_text(prior.get("typical_unit"))
+    if not typical_quantity or typical_unit not in MEASURE_UNITS:
+        return None
+    converted = convert_quantity(quantity, unit, typical_unit)
+    return converted / typical_quantity if converted else None
+
+
+def resolve_inventory_quantities(data: dict[str, Any], prior: dict[str, Any] | None) -> dict[str, Any]:
+    """Normalize legacy form data into the two inventory quantities."""
+    explicit_pz = data.get("quantity_pz")
+    explicit_measure = data.get("measure_quantity")
+    if explicit_pz is not None or explicit_measure is not None:
+        quantity_pz = float(explicit_pz) if explicit_pz is not None else None
+        measure_quantity = float(explicit_measure) if explicit_measure is not None else None
+        measure_unit = clean_text(data.get("measure_unit") or data.get("unit"), "g")
+    else:
+        quantity = float(data.get("quantity") or 0)
+        unit = clean_text(data.get("unit"), "pz")
+        if is_piece_unit(unit):
+            quantity_pz = quantity
+            measure_quantity, measure_unit = piece_measure_quantity(quantity, prior)
+        else:
+            quantity_pz = piece_quantity_from_measure(quantity, unit, prior)
+            measure_quantity, measure_unit = quantity, unit
+    return {
+        "quantity_pz": quantity_pz,
+        "measure_quantity": measure_quantity,
+        "measure_unit": measure_unit if measure_unit in MEASURE_UNITS else None,
+    }
+
+
+def inventory_quantity_in_unit(item: dict[str, Any], prior: dict[str, Any] | None, target_unit: str) -> float:
+    """Return an inventory row converted to the unit used by a reorder threshold."""
+    quantity_pz = item.get("quantity_pz")
+    measure_quantity = item.get("measure_quantity")
+    measure_unit = item.get("measure_unit")
+    if quantity_pz is None and measure_quantity is None:
+        if is_piece_unit(item.get("unit")):
+            quantity_pz = item.get("quantity")
+        else:
+            measure_quantity = item.get("quantity")
+            measure_unit = item.get("unit")
+    if is_piece_unit(target_unit):
+        return float(quantity_pz or 0)
+    if measure_quantity is None and quantity_pz is not None:
+        measure_quantity, measure_unit = piece_measure_quantity(float(quantity_pz), prior)
+    if measure_quantity is not None and not measure_unit:
+        typical_unit = clean_text((prior or {}).get("typical_unit"))
+        measure_unit = typical_unit if typical_unit in MEASURE_UNITS else item.get("unit")
+    if measure_quantity is None or not measure_unit:
+        return 0.0
+    return convert_quantity(float(measure_quantity), measure_unit, target_unit)
+
+
+def inventory_storage_payload(item_prior_id: int, data: dict[str, Any], prior: dict[str, Any] | None) -> dict[str, Any]:
+    quantities = resolve_inventory_quantities(data, prior)
+    # Keep quantity/unit populated for older code and older clients.
+    display_unit = (prior or {}).get("inventory_display_unit") or ("pz" if is_piece_unit(data.get("unit")) else "measure")
+    if display_unit == "pz" and quantities["quantity_pz"] is not None:
+        legacy_quantity, legacy_unit = quantities["quantity_pz"], "pz"
+    else:
+        legacy_quantity, legacy_unit = quantities["measure_quantity"], quantities["measure_unit"]
+    return {
+        "item_prior_id": item_prior_id,
+        "quantity": legacy_quantity if legacy_quantity is not None else 0,
+        "unit": legacy_unit or "pz",
+        "quantity_pz": quantities["quantity_pz"],
+        "measure_quantity": quantities["measure_quantity"],
+        "location": data["location"],
+        "preparation_status": data.get("preparation_status") or "none",
+        "expiry_date": data.get("expiry_date"),
+        "expiry_estimated": int(data.get("expiry_estimated") or 0),
+        "notes": data.get("notes"),
+        "updated_at": utc_now(),
+    }
 
 
 def convert_quantity(quantity: float, from_unit: str | None, to_unit: str | None) -> float:
@@ -2364,7 +2616,9 @@ def get_today_quantity_change(item_id: int, item_unit: str | None) -> float:
 
 
 def aggregate_meal_ingredients(meal: dict[str, Any]) -> list[dict[str, Any]]:
-    aggregated: dict[int, dict[str, Any]] = {}
+    # Una riga per prior e grandezza: lo stesso prodotto può essere richiesto
+    # in pezzi da una ricetta e in grammi/ml da un'altra.
+    aggregated: dict[tuple[int, str], dict[str, Any]] = {}
     for recipe in meal.get("recipes", []):
         if not recipe:
             continue
@@ -2372,22 +2626,39 @@ def aggregate_meal_ingredients(meal: dict[str, Any]) -> list[dict[str, Any]]:
         for ingredient in recipe["ingredients"]:
             prior_id = int(ingredient["item_prior_id"])
             base_unit, factor = unit_factor(ingredient["unit"])
-            row = aggregated.setdefault(prior_id, {"item_prior_id": prior_id, "name": ingredient["name"], "required": 0.0, "quantity_is_qb": False, "always_available": normalize_match_text(ingredient["name"]) == "acqua", "unit": base_unit, "default_location": ingredient.get("default_location") or "dispensa", "recipes": []})
+            row = aggregated.setdefault((prior_id, base_unit), {"item_prior_id": prior_id, "name": ingredient["name"], "required": 0.0, "quantity_is_qb": False, "always_available": normalize_match_text(ingredient["name"]) == "acqua", "unit": base_unit, "default_location": ingredient.get("default_location") or "dispensa", "recipes": []})
             if ingredient.get("quantity_is_qb"):
                 row["quantity_is_qb"] = True
             elif row["unit"] == base_unit:
                 row["required"] += float(ingredient["quantity"]) * scale * factor
             row["recipes"].append(recipe["name"])
     supabase = get_supabase()
-    inventory = supabase.table("inventory_items").select("item_prior_id,quantity,unit").execute().data or []
-    shopping = supabase.table("shopping_items").select("item_prior_id,quantity,unit").execute().data or []
+    inventory = supabase.table("inventory_items").select("item_prior_id,quantity,unit,quantity_pz,measure_quantity").execute().data or []
+    shopping = supabase.table("shopping_items").select("item_prior_id,quantity,unit,quantity_pz,measure_quantity").execute().data or []
+    prior_map = load_item_prior_map([int(row["item_prior_id"]) for row in inventory + shopping])
 
     def stock_by_prior(rows: list[dict[str, Any]]) -> dict[int, dict[str, float]]:
         stock: dict[int, dict[str, float]] = {}
         for item in rows:
-            base_unit, factor = unit_factor(item["unit"])
             prior_stock = stock.setdefault(int(item["item_prior_id"]), {})
-            prior_stock[base_unit] = prior_stock.get(base_unit, 0.0) + float(item["quantity"] or 0) * factor
+            prior = prior_map.get(int(item["item_prior_id"]))
+            quantity_pz = item.get("quantity_pz")
+            measure_quantity = item.get("measure_quantity")
+            if quantity_pz is None and measure_quantity is None:
+                if is_piece_unit(item.get("unit")):
+                    quantity_pz = item.get("quantity")
+                else:
+                    measure_quantity = item.get("quantity")
+            if quantity_pz is not None:
+                prior_stock["pz"] = prior_stock.get("pz", 0.0) + float(quantity_pz or 0)
+            if measure_quantity is not None and not is_piece_unit(item.get("unit")):
+                base_unit, factor = unit_factor(item.get("unit") or "g")
+                prior_stock[base_unit] = prior_stock.get(base_unit, 0.0) + float(measure_quantity or 0) * factor
+            elif quantity_pz is not None:
+                derived, derived_unit = piece_measure_quantity(float(quantity_pz), prior)
+                if derived is not None and derived_unit:
+                    base_unit, factor = unit_factor(derived_unit)
+                    prior_stock[base_unit] = prior_stock.get(base_unit, 0.0) + derived * factor
         return stock
 
     inventory_stock = stock_by_prior(inventory)
@@ -2428,9 +2699,13 @@ def aggregate_meal_ingredients(meal: dict[str, Any]) -> list[dict[str, Any]]:
     return sorted(aggregated.values(), key=lambda row: row["name"].casefold())
 
 
-def consume_meal_ingredients(meal: dict[str, Any]) -> None:
-    """Consume available pantry stock, using the instances with nearest expiry first."""
-    ingredients = aggregate_meal_ingredients(meal)
+def consume_meal_ingredients(meal: dict[str, Any], recipe_id: int | None = None) -> None:
+    """Consume pantry stock for a meal or for one of its recipes."""
+    if recipe_id is None:
+        ingredients = aggregate_meal_ingredients(meal)
+    else:
+        recipe = next((recipe for recipe in meal.get("recipes", []) if recipe and int(recipe["id"]) == recipe_id), None)
+        ingredients = aggregate_meal_ingredients(meal | {"recipes": [recipe]}) if recipe else []
     supabase = get_supabase()
     for ingredient in ingredients:
         if ingredient["quantity_is_qb"] or ingredient["always_available"] or ingredient["required"] <= 0:
@@ -2449,32 +2724,54 @@ def consume_meal_ingredients(meal: dict[str, Any]) -> None:
         base_unit = ingredient["unit"]
         compatible = []
         for row in rows:
-            row_unit, row_factor = unit_factor(row["unit"])
-            if row_unit == base_unit:
-                compatible.append((row, row_factor))
+            prior = get_item_prior(int(row["item_prior_id"]))
+            quantity_pz = row.get("quantity_pz")
+            measure_quantity = row.get("measure_quantity")
+            if quantity_pz is None and measure_quantity is None:
+                if is_piece_unit(row.get("unit")):
+                    quantity_pz = row.get("quantity")
+                else:
+                    measure_quantity = row.get("quantity")
+            if base_unit == "pz" and quantity_pz is not None:
+                compatible.append((row, float(quantity_pz), "pz", 1.0))
+            elif base_unit != "pz" and measure_quantity is not None:
+                row_base, row_factor = unit_factor(row.get("unit") or "g")
+                if row_base == base_unit:
+                    compatible.append((row, float(measure_quantity) * row_factor, "measure", row_factor))
         compatible.sort(key=lambda pair: (parse_iso_date(pair[0].get("expiry_date")) is None, pair[0].get("expiry_date") or "9999-12-31", pair[0].get("id", 0)))
 
-        for row, row_factor in compatible:
+        for row, available_base, quantity_kind, row_factor in compatible:
             if needed_base <= 0:
                 break
-            available_base = float(row["quantity"] or 0) * row_factor
             consumed_base = min(available_base, needed_base)
-            supabase.table("meal_consumptions").insert({
+            consumption = {
                 "meal_id": meal["id"],
                 "inventory_item_id": row["id"],
                 "item_snapshot": row,
-                "consumed_quantity": consumed_base / row_factor,
-                "consumed_unit": row["unit"],
-            }).execute()
+                "consumed_quantity": consumed_base if quantity_kind == "pz" else consumed_base / row_factor,
+                "consumed_unit": "pz" if quantity_kind == "pz" else row["unit"],
+            }
+            if recipe_id is not None:
+                consumption["recipe_id"] = recipe_id
+            supabase.table("meal_consumptions").insert(consumption).execute()
             remaining_base = available_base - consumed_base
             if remaining_base <= 0:
                 delete_inventory_item(int(row["id"]))
             else:
+                updated = dict(row)
+                if quantity_kind == "pz":
+                    updated["quantity_pz"] = remaining_base
+                    derived, _ = piece_measure_quantity(remaining_base, get_item_prior(int(row["item_prior_id"])))
+                    updated["measure_quantity"] = derived if derived is not None else row.get("measure_quantity")
+                else:
+                    updated["measure_quantity"] = remaining_base / row_factor
+                    if row.get("quantity_pz") is not None and available_base:
+                        updated["quantity_pz"] = float(row["quantity_pz"]) * remaining_base / available_base
                 update_inventory_item(
                     int(row["id"]),
                     int(row["item_prior_id"]),
-                    row | {"quantity": remaining_base / row_factor, "unit": row["unit"]},
-                    quantity_delta=-(consumed_base / row_factor),
+                    updated,
+                    quantity_delta=-(consumed_base if quantity_kind == "pz" else consumed_base / row_factor),
                 )
             needed_base -= consumed_base
 
@@ -2491,16 +2788,24 @@ def restore_meal_ingredients(meal: dict[str, Any]) -> None:
             row = current[0]
             if row.get("unit") == record["consumed_unit"]:
                 quantity = float(row.get("quantity") or 0) + float(record["consumed_quantity"])
+                restored = row | {"quantity": quantity}
+                if record["consumed_unit"] == "pz":
+                    restored["quantity_pz"] = float(row.get("quantity_pz") or row.get("quantity") or 0) + float(record["consumed_quantity"])
+                    derived, _ = piece_measure_quantity(restored["quantity_pz"], get_item_prior(int(row["item_prior_id"])))
+                    if derived is not None:
+                        restored["measure_quantity"] = float(row.get("measure_quantity") or 0) + (derived - float(row.get("measure_quantity") or 0))
+                else:
+                    restored["measure_quantity"] = float(row.get("measure_quantity") or row.get("quantity") or 0) + float(record["consumed_quantity"])
                 update_inventory_item(
                     item_id,
                     int(row["item_prior_id"]),
-                    row | {"quantity": quantity, "unit": row["unit"]},
+                    restored,
                     quantity_delta=float(record["consumed_quantity"]),
                 )
             else:
                 snapshot = {}
         if not current or not snapshot:
-            payload = {key: snapshot[key] for key in ("item_prior_id", "quantity", "unit", "location", "expiry_date", "expiry_estimated", "notes") if key in snapshot}
+            payload = {key: snapshot[key] for key in ("item_prior_id", "quantity", "unit", "quantity_pz", "measure_quantity", "location", "expiry_date", "expiry_estimated", "notes") if key in snapshot}
             if payload:
                 response = supabase.table("inventory_items").insert(payload).execute()
                 if response.data:
@@ -2791,7 +3096,7 @@ def load_item_prior_map(prior_ids: list[int]) -> dict[int, dict[str, Any]]:
 
 def merge_item_with_prior(item: dict[str, Any], prior: dict[str, Any] | None) -> dict[str, Any]:
     prior = prior or {}
-    return item | {
+    merged = item | {
         "name": prior.get("name", ""),
         "category": prior.get("category", ""),
         "typical_quantity": prior.get("typical_quantity"),
@@ -2801,6 +3106,31 @@ def merge_item_with_prior(item: dict[str, Any], prior: dict[str, Any] | None) ->
         "picture": prior.get("picture"),
         
         "prior_notes": prior.get("notes", ""),
+    }
+    # Backfill rows created before the split quantities migration.
+    quantity_pz = item.get("quantity_pz")
+    measure_quantity = item.get("measure_quantity")
+    if quantity_pz is None and measure_quantity is None:
+        if is_piece_unit(item.get("unit")):
+            quantity_pz = item.get("quantity")
+        else:
+            measure_quantity = item.get("quantity")
+    if quantity_pz is not None and measure_quantity is None:
+        measure_quantity, measure_unit = piece_measure_quantity(float(quantity_pz), prior)
+    else:
+        measure_unit = clean_text(item.get("unit")) if not is_piece_unit(item.get("unit")) else None
+    display = prior.get("inventory_display_unit") or ("pz" if quantity_pz is not None and measure_quantity is None else "measure")
+    if display == "pz" and quantity_pz is not None:
+        display_quantity, display_unit = quantity_pz, "pz"
+    else:
+        display_quantity, display_unit = measure_quantity, measure_unit
+    return merged | {
+        "quantity_pz": quantity_pz,
+        "measure_quantity": measure_quantity,
+        "measure_unit": measure_unit,
+        "quantity_display": display,
+        "quantity": display_quantity if display_quantity is not None else item.get("quantity"),
+        "unit": display_unit or item.get("unit") or "pz",
     }
 
 
@@ -2861,31 +3191,34 @@ def create_inventory_item(
     *,
     merge_similar: bool = False,
 ) -> int:
+    prior = get_item_prior(item_prior_id)
     if merge_similar:
         existing = find_similar_inventory_item(item_prior_id, data.get("expiry_date"))
         if existing:
-            existing_unit, existing_factor = unit_factor(existing["unit"])
-            incoming_unit, incoming_factor = unit_factor(data["unit"])
-            if existing_unit == incoming_unit:
-                new_quantity = float(existing.get("quantity") or 0) + float(data["quantity"]) * incoming_factor / existing_factor
+            existing_raw = merge_item_with_prior(existing, prior)
+            incoming = resolve_inventory_quantities(data, prior)
+            if incoming["quantity_pz"] is not None and existing_raw.get("quantity_pz") is not None:
+                new_quantity = float(existing_raw["quantity_pz"] or 0) + float(incoming["quantity_pz"])
                 update_inventory_item(
                     int(existing["id"]),
                     item_prior_id,
-                    existing | {"quantity": new_quantity, "unit": existing["unit"]},
-                    quantity_delta=float(data["quantity"]) * incoming_factor / existing_factor,
+                    existing_raw | {"quantity_pz": new_quantity, "measure_quantity": existing_raw.get("measure_quantity")},
+                    quantity_delta=float(incoming["quantity_pz"]),
                 )
                 return int(existing["id"])
-    payload = {
-        "item_prior_id": item_prior_id,
-        "quantity": data["quantity"],
-        "unit": data["unit"],
-        "location": data["location"],
-        "preparation_status": data.get("preparation_status") or "none",
-        "expiry_date": data.get("expiry_date"),
-        "expiry_estimated": int(data.get("expiry_estimated") or 0),
-        "notes": data.get("notes"),
-        "updated_at": utc_now(),
-    }
+            if incoming["measure_quantity"] is not None and existing_raw.get("measure_quantity") is not None:
+                old_base, old_factor = unit_factor(existing_raw.get("measure_unit") or existing_raw.get("unit"))
+                new_base, new_factor = unit_factor(clean_text(data.get("unit"), "g"))
+                if old_base == new_base:
+                    added = float(incoming["measure_quantity"]) * new_factor / old_factor
+                    update_inventory_item(
+                        int(existing["id"]),
+                        item_prior_id,
+                        existing_raw | {"measure_quantity": float(existing_raw["measure_quantity"]) + added},
+                        quantity_delta=added,
+                    )
+                    return int(existing["id"])
+    payload = inventory_storage_payload(item_prior_id, data, prior)
     response = get_supabase().table("inventory_items").insert(payload).execute()
     if not response.data:
         raise RuntimeError("Inserimento inventario non riuscito.")
@@ -2919,17 +3252,7 @@ def update_inventory_item(
     *,
     quantity_delta: float | None = None,
 ) -> None:
-    payload = {
-        "item_prior_id": item_prior_id,
-        "quantity": data["quantity"],
-        "unit": data["unit"],
-        "location": data["location"],
-        "preparation_status": data.get("preparation_status") or "none",
-        "expiry_date": data.get("expiry_date"),
-        "expiry_estimated": int(data.get("expiry_estimated") or 0),
-        "notes": data.get("notes"),
-        "updated_at": utc_now(),
-    }
+    payload = inventory_storage_payload(item_prior_id, data, get_item_prior(item_prior_id))
     get_supabase().table("inventory_items").update(payload).eq("id", item_id).execute()
     if quantity_delta:
         record_inventory_quantity_change(item_id, quantity_delta, data["unit"])
@@ -2960,6 +3283,8 @@ def add_or_increment_shopping_item(
     notes: str | None = None,
 ) -> int:
     supabase = get_supabase()
+    prior = get_item_prior(item_prior_id)
+    quantities = resolve_inventory_quantities({"quantity": quantity, "unit": unit}, prior)
     existing_response = (
         supabase.table("shopping_items")
         .select("*")
@@ -2982,6 +3307,8 @@ def add_or_increment_shopping_item(
         supabase.table("shopping_items").update(
             {
                 "quantity": float(existing.get("quantity") or 0) + quantity,
+                "quantity_pz": (float(existing.get("quantity_pz") or 0) + float(quantities["quantity_pz"])) if quantities["quantity_pz"] is not None and existing.get("quantity_pz") is not None else existing.get("quantity_pz"),
+                "measure_quantity": (float(existing.get("measure_quantity") or 0) + float(quantities["measure_quantity"])) if quantities["measure_quantity"] is not None and existing.get("measure_quantity") is not None else existing.get("measure_quantity"),
                 "notes": merged_notes,
             }
         ).eq("id", existing["id"]).execute()
@@ -2992,6 +3319,8 @@ def add_or_increment_shopping_item(
             "item_prior_id": item_prior_id,
             "quantity": quantity,
             "unit": unit,
+            "quantity_pz": quantities["quantity_pz"],
+            "measure_quantity": quantities["measure_quantity"],
             "target_location": target_location,
             "notes": notes,
         }
@@ -3029,7 +3358,15 @@ def delete_shopping_item(item_id: int) -> None:
 
 
 def update_shopping_item(item_id: int, new_quantity: float, unit: str) -> None:
-    get_supabase().table("shopping_items").update({"quantity": new_quantity, "unit": unit}).eq("id", item_id).execute()
+    item = get_supabase().table("shopping_items").select("item_prior_id").eq("id", item_id).limit(1).execute().data or []
+    prior = get_item_prior(int(item[0]["item_prior_id"])) if item else None
+    quantities = resolve_inventory_quantities({"quantity": new_quantity, "unit": unit}, prior)
+    get_supabase().table("shopping_items").update({
+        "quantity": new_quantity,
+        "unit": unit,
+        "quantity_pz": quantities["quantity_pz"],
+        "measure_quantity": quantities["measure_quantity"],
+    }).eq("id", item_id).execute()
 
 
 def complete_shopping_purchase(
@@ -3147,6 +3484,8 @@ def add_receipt_item_to_kitchen(
 
 
 def create_history_item(data: dict[str, Any]) -> int:
+    prior = get_item_prior(int(data["item_prior_id"]))
+    quantities = resolve_inventory_quantities(data, prior)
     response = get_supabase().table("items_history").insert(
         {
             "item_prior_id": data["item_prior_id"],
@@ -3154,6 +3493,8 @@ def create_history_item(data: dict[str, Any]) -> int:
             "purchased_at": data["purchased_at"],
             "quantity": data["quantity"],
             "unit": data["unit"],
+            "quantity_pz": quantities["quantity_pz"],
+            "measure_quantity": quantities["measure_quantity"],
             "cost": data.get("cost"),
             "target_location": data.get("target_location"),
             "notes": data.get("notes"),

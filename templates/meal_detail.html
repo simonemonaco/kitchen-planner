@@ -8,20 +8,31 @@
     <div class="meal-recipe-list">
       {% for recipe in meal.recipes %}
         <div class="meal-recipe-entry">
-          <a class="recipe-chip" href="{{ url_for('recipe_detail', recipe_id=recipe.id) }}">
+          <a class="meal-recipe-main" href="{{ url_for('recipe_detail', recipe_id=recipe.id) }}">
             {% if recipe.picture %}<img src="{{ recipe.picture }}" alt="">{% endif %}
-            <span>{{ recipe.name }}</span><i class="fa-solid fa-arrow-up-right-from-square"></i>
+            <span class="meal-recipe-name">{{ recipe.name }}</span><i class="fa-solid fa-arrow-up-right-from-square meal-recipe-link-icon"></i>
           </a>
-          <div class="meal-recipe-actions" aria-label="Ordina o rimuovi {{ recipe.name }}">
-            <form method="post" action="{{ url_for('move_meal_recipe', meal_id=meal.id, recipe_id=recipe.id, direction='up') }}">
-              <button class="small-button secondary icon-only" type="submit" {% if loop.first %}disabled{% endif %} aria-label="Sposta {{ recipe.name }} sopra"><i class="fa-solid fa-chevron-up" aria-hidden="true"></i></button>
+          <div class="meal-recipe-meta">
+            <span class="meal-recipe-label">Porzioni</span>
+            <button class="recipe-people-button" type="button" data-edit-recipe-people data-recipe-id="{{ recipe.id }}" data-recipe-name="{{ recipe.name|e }}" data-people-count="{{ recipe.people_count }}" aria-label="Modifica persone per {{ recipe.name }}">
+              <i class="fa-solid fa-users" aria-hidden="true"></i> <span data-recipe-people-display>{{ recipe.people_count }}</span>
+            </button>
+          </div>
+          <div class="meal-recipe-actions" aria-label="Azioni per {{ recipe.name }}">
+            <form method="post" action="{{ url_for('consume_meal_recipe', meal_id=meal.id, recipe_id=recipe.id) }}" onsubmit="return confirm('Sottrarre gli ingredienti di {{ recipe.name|e }} dall’inventario?');">
+              <button class="small-button {% if recipe.inventory_consumed_at %}secondary{% endif %}" type="submit" {% if recipe.inventory_consumed_at %}disabled{% endif %}><i class="fa-solid {% if recipe.inventory_consumed_at %}fa-check{% else %}fa-boxes-stacked{% endif %}" aria-hidden="true"></i> {% if recipe.inventory_consumed_at %}Ingredienti sottratti{% else %}Sottrai ingredienti{% endif %}</button>
             </form>
-            <form method="post" action="{{ url_for('move_meal_recipe', meal_id=meal.id, recipe_id=recipe.id, direction='down') }}">
-              <button class="small-button secondary icon-only" type="submit" {% if loop.last %}disabled{% endif %} aria-label="Sposta {{ recipe.name }} sotto"><i class="fa-solid fa-chevron-down" aria-hidden="true"></i></button>
-            </form>
-            <form method="post" action="{{ url_for('remove_meal_recipe', meal_id=meal.id, recipe_id=recipe.id) }}" onsubmit="return confirm('Rimuovere questo piatto dal meal?');">
-              <button class="small-button danger icon-only" type="submit" aria-label="Rimuovi {{ recipe.name }}"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>
-            </form>
+            <div class="meal-recipe-tools" aria-label="Ordina o rimuovi {{ recipe.name }}">
+              <form method="post" action="{{ url_for('move_meal_recipe', meal_id=meal.id, recipe_id=recipe.id, direction='up') }}">
+                <button class="recipe-icon-button" type="submit" {% if loop.first %}disabled{% endif %} aria-label="Sposta {{ recipe.name }} sopra"><i class="fa-solid fa-chevron-up" aria-hidden="true"></i></button>
+              </form>
+              <form method="post" action="{{ url_for('move_meal_recipe', meal_id=meal.id, recipe_id=recipe.id, direction='down') }}">
+                <button class="recipe-icon-button" type="submit" {% if loop.last %}disabled{% endif %} aria-label="Sposta {{ recipe.name }} sotto"><i class="fa-solid fa-chevron-down" aria-hidden="true"></i></button>
+              </form>
+              <form method="post" action="{{ url_for('remove_meal_recipe', meal_id=meal.id, recipe_id=recipe.id) }}" onsubmit="return confirm('Rimuovere questo piatto dal meal?');">
+                <button class="recipe-icon-button danger" type="submit" aria-label="Rimuovi {{ recipe.name }}"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>
+              </form>
+            </div>
           </div>
         </div>
       {% endfor %}
@@ -47,13 +58,40 @@
     </div>
   </div>
 </section>
-<section class="list-panel ingredient-panel"><div class="section-heading"><div><p class="eyebrow">Dispensa</p><h3>Ingredienti aggregati</h3><p class="field-help">Il simbolo della spesa indica le quantità già presenti nella lista della spesa: vengono conteggiate insieme a quelle disponibili in casa.</p></div><p class="field-help">Le quantità sono ricalcolate per {{ meal.people_count }} persone.</p></div>
+<dialog class="recipe-people-dialog" data-recipe-people-dialog>
+  <form class="form-panel" method="post" data-recipe-people-form>
+    <h3>Persone per ricetta</h3>
+    <p class="field-help">Quante persone deve coprire <strong data-recipe-people-name></strong>?</p>
+    <label>Numero di persone<input name="people_count" type="number" min="1" step="1" required data-recipe-people-input></label>
+    <div class="form-actions"><button class="button secondary" type="button" data-recipe-people-cancel>Annulla</button><button class="button" type="submit">Salva</button></div>
+  </form>
+</dialog>
+<section class="list-panel ingredient-panel"><div class="section-heading"><div><p class="eyebrow">Dispensa</p><h3>Ingredienti aggregati</h3><p class="field-help">Il simbolo della spesa indica le quantità già presenti nella lista della spesa: vengono conteggiate insieme a quelle disponibili in casa. La preparazione del pasto non modifica l’inventario automaticamente: usa il pulsante sulla singola ricetta.</p></div><p class="field-help">Le quantità sono ricalcolate per {{ meal.people_count }} persone.</p></div>
 {% if ingredients %}<div class="item-list">{% for item in ingredients %}<article class="ingredient-row status-{{ item.status }}"><div class="ingredient-status"><span class="status-icon">{% if item.status == 'ok' %}<i class="fa-solid fa-check"></i>{% elif item.status == 'partial' %}<i class="fa-solid fa-check"></i>{% else %}<i class="fa-solid fa-xmark"></i>{% endif %}</span></div><div><h3>{{ item.name }}{% if item.shopping_used > 0 %} <i class="fa-solid fa-cart-shopping ingredient-shopping" title="Coperto anche dalla lista della spesa" aria-label="Coperto anche dalla lista della spesa"></i>{% endif %}</h3><p>Necessari <strong>{% if item.quantity_is_qb %}q.b.{% else %}{{ item.required|qty }} {{ item.unit }}{% endif %}</strong> · {% if item.always_available %}Sempre disponibile{% elif item.quantity_is_qb %}{% if item.status == 'ok' %}Presente nell'inventario{% else %}Non presente nell'inventario{% endif %}{% else %}Disponibili {{ item.available|qty }} {{ item.unit }}{% endif %}</p></div>{% if item.quantity_is_qb %}<span class="badge {% if item.status != 'ok' %}danger{% endif %}">{% if item.status == 'ok' %}Disponibile{% else %}Manca{% endif %}</span>{% elif item.shortage > 0 %}<form method="post" action="{{ url_for('meal_add_to_shopping', meal_id=meal.id, prior_id=item.item_prior_id) }}"><button class="small-button" type="submit"><i class="fa-solid fa-cart-plus"></i> Aggiungi {{ item.shortage|qty }} {{ item.unit }}</button></form>{% elif item.shopping_used > 0 %}<span class="badge warning">Nella lista</span>{% else %}<span class="badge">Disponibile</span>{% endif %}</article>{% endfor %}</div>{% else %}<div class="empty-state"><h3>Nessun ingrediente</h3></div>{% endif %}
 </section>
 {% endblock %}
 {% block page_scripts %}
 <script>
 (() => {
+  const peopleDialog = document.querySelector('[data-recipe-people-dialog]');
+  const peopleForm = peopleDialog?.querySelector('[data-recipe-people-form]');
+  const peopleName = peopleDialog?.querySelector('[data-recipe-people-name]');
+  const peopleInput = peopleDialog?.querySelector('[data-recipe-people-input]');
+  if (peopleDialog && peopleForm && peopleInput) {
+    document.querySelectorAll('[data-edit-recipe-people]').forEach(button => {
+      button.addEventListener('click', () => {
+        peopleForm.action = `{{ url_for('meal_detail', meal_id=meal.id) }}/recipes/${button.dataset.recipeId}/people`;
+        peopleName.textContent = button.dataset.recipeName;
+        peopleInput.value = button.dataset.peopleCount;
+        peopleDialog.showModal();
+        peopleInput.focus();
+        peopleInput.select();
+      });
+    });
+    peopleDialog.querySelector('[data-recipe-people-cancel]')?.addEventListener('click', () => peopleDialog.close());
+    peopleDialog.addEventListener('click', event => { if (event.target === peopleDialog) peopleDialog.close(); });
+  }
+
   const picker = document.querySelector('[data-meal-recipe-picker]');
   if (!picker) return;
   const search = picker.querySelector('[data-meal-recipe-search]');
