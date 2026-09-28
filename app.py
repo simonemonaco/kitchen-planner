@@ -2454,7 +2454,13 @@ def list_meals() -> list[dict[str, Any]]:
 
 
 def list_meal_history() -> list[dict[str, Any]]:
-    meals = get_supabase().table("meals").select("*").not_.is_("completed_at", "null").order("completed_at", desc=True).execute().data or []
+    today = date.today().isoformat()
+    # Un pasto con data passata può essere stato inserito manualmente senza
+    # essere ancora marcato come "preparato". Deve comunque restare visibile
+    # nello storico, altrimenti scompare sia dall'agenda sia da questa vista.
+    meals = get_supabase().table("meals").select("*").or_(
+        f"meal_date.lt.{today},completed_at.not.is.null"
+    ).order("meal_date", desc=True).order("completed_at", desc=True).execute().data or []
     recipe_links = get_supabase().table("meal_recipes").select("meal_id,recipe_id").execute().data or []
     recipes_map = {int(row["id"]): row for row in (get_supabase().table("recipes").select("id,name,picture").execute().data or [])}
     links: dict[int, list[dict[str, Any]]] = {}

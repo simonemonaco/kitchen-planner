@@ -6,10 +6,10 @@
   {% if meals %}<div class="item-list">{% for meal in meals %}
     <article class="meal-row history-meal-row">
       <div class="meal-date"><strong>{{ meal.meal_date|date_it }}</strong><span>{{ meal.meal_type_label }}</span></div>
-      <div><h3>{{ meal.name }}</h3><p>{{ meal.people_count }} persone · {{ meal.recipes|length }} piatti{% if meal.recipes %}: {% for recipe in meal.recipes %}{{ recipe.name }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</p><p class="field-help">Preparato il {{ meal.completed_at|datetime_it }}</p></div>
-      <button class="small-button secondary" type="button" data-undo-meal data-meal-id="{{ meal.id }}" data-meal-name="{{ meal.name }}" data-meal-date="{{ meal.meal_date }}"><i class="fa-solid fa-rotate-left" aria-hidden="true"></i> Annulla</button>
+      <div><h3>{{ meal.name }}</h3><p>{{ meal.people_count }} persone · {{ meal.recipes|length }} piatti{% if meal.recipes %}: {% for recipe in meal.recipes %}{{ recipe.name }}{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}</p></div>
+      {% if meal.completed_at %}<button class="small-button secondary" type="button" data-undo-meal data-meal-id="{{ meal.id }}" data-meal-name="{{ meal.name }}" data-meal-date="{{ meal.meal_date }}"><i class="fa-solid fa-rotate-left" aria-hidden="true"></i> Annulla</button>{% else %}<a class="small-button secondary" href="{{ url_for('meal_detail', meal_id=meal.id) }}"><i class="fa-solid fa-arrow-right" aria-hidden="true"></i> Apri</a>{% endif %}
     </article>
-  {% endfor %}</div>{% else %}<div class="empty-state"><h3>Nessun pasto nello storico</h3><p>I pasti segnati come preparati appariranno qui.</p></div>{% endif %}
+  {% endfor %}</div>{% else %}<div class="empty-state"><h3>Nessun pasto nello storico</h3><p>I pasti segnati come preparati e quelli con una data passata appariranno qui.</p></div>{% endif %}
 </section>
 <dialog class="meal-undo-dialog" data-meal-undo-dialog>
   <form method="post" data-meal-undo-form>

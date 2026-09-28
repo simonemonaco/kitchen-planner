@@ -6,7 +6,33 @@
   <label>Nome personalizzato<input name="name" value="{{ meal.name }}" placeholder="Es. Cena di famiglia" required></label>
   <div class="field-grid"><label>Data<input name="meal_date" type="date" value="{{ meal.meal_date }}" required></label><label>Persone<input name="people_count" type="number" min="1" value="{{ meal.people_count or 2 }}" required></label></div>
   <label>Momento<select name="meal_type">{% for key,label in {'colazione':'Colazione','pranzo':'Pranzo','cena':'Cena'}.items() %}<option value="{{ key }}" {% if meal.meal_type == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
-  <fieldset><legend>Piatti</legend>{% if recipes %}<div class="recipe-select-grid">{% for recipe in recipes %}<label class="recipe-select"><input type="checkbox" name="recipe_ids" value="{{ recipe.id }}" {% if recipe.id in meal.recipe_ids %}checked{% endif %}><span>{% if recipe.picture %}<img src="{{ recipe.picture }}" alt="">{% endif %}<strong>{{ recipe.name }}</strong><small>{{ recipe.servings }} persone</small></span></label>{% endfor %}</div>{% else %}<p class="field-help">Crea prima una ricetta dal <a href="{{ url_for('recipes') }}">ricettario</a>.</p>{% endif %}</fieldset>
+  <fieldset><legend>Piatti</legend>{% if recipes %}<div class="recipe-select-groups" data-recipe-select-groups>{% for type_key, type_label in recipe_meal_types.items() %}{% set type_recipes = recipes|selectattr('meal_type', 'equalto', type_key)|list %}{% if type_recipes %}<section class="recipe-select-group"><button class="recipe-select-toggle" type="button" aria-expanded="{% if type_key == 'antipasto' %}true{% else %}false{% endif %}" data-recipe-select-toggle><h3>{{ type_label }}</h3><i class="fa-solid fa-chevron-down" aria-hidden="true"></i></button><div class="recipe-select-panel" data-recipe-select-panel {% if type_key != 'antipasto' %}hidden{% endif %}><div class="recipe-select-grid">{% for recipe in type_recipes %}<label class="recipe-select"><input type="checkbox" name="recipe_ids" value="{{ recipe.id }}" {% if recipe.id in meal.recipe_ids %}checked{% endif %}><span>{% if recipe.picture %}<img src="{{ recipe.picture }}" alt="">{% endif %}<strong>{{ recipe.name }}</strong><small>{{ recipe.servings }} persone</small></span></label>{% endfor %}</div></div></section>{% endif %}{% endfor %}</div>{% else %}<p class="field-help">Crea prima una ricetta dal <a href="{{ url_for('recipes') }}">ricettario</a>.</p>{% endif %}</fieldset>
   <div class="form-actions"><a class="button secondary" href="{{ url_for('meals_agenda') }}">Annulla</a><button class="button" type="submit">Salva pasto</button></div>
 </form></section>
+{% endblock %}
+{% block page_scripts %}
+<script>
+(() => {
+  const groups = document.querySelector('[data-recipe-select-groups]');
+  if (!groups) return;
+  const toggles = [...groups.querySelectorAll('[data-recipe-select-toggle]')];
+
+  toggles.forEach(toggle => {
+    toggle.addEventListener('click', () => {
+      const group = toggle.closest('.recipe-select-group');
+      const panel = group.querySelector('[data-recipe-select-panel]');
+      const isOpen = toggle.getAttribute('aria-expanded') === 'true';
+      toggles.forEach(otherToggle => {
+        const otherGroup = otherToggle.closest('.recipe-select-group');
+        otherToggle.setAttribute('aria-expanded', 'false');
+        otherGroup.querySelector('[data-recipe-select-panel]').hidden = true;
+      });
+      if (!isOpen) {
+        toggle.setAttribute('aria-expanded', 'true');
+        panel.hidden = false;
+      }
+    });
+  });
+})();
+</script>
 {% endblock %}
