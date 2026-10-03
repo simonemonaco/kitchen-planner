@@ -1,4 +1,133 @@
 (() => {
+  function setupAutocomplete(input, list) {
+    if (input.dataset.autocompleteReady === "1") {
+      return;
+    }
+    const options = Array.from(list.options).filter((option) => option.value.trim());
+    if (!options.some((option) => option.dataset.id || option.dataset.recipeId)) {
+      return;
+    }
+    input.dataset.autocompleteReady = "1";
+    input.dataset.autocompleteSource = input.getAttribute("list");
+
+    const wrapper = document.createElement("div");
+    wrapper.className = "autocomplete-field";
+    input.parentNode.insertBefore(wrapper, input);
+    wrapper.appendChild(input);
+    input.removeAttribute("list");
+
+    const menu = document.createElement("div");
+    menu.className = "autocomplete-menu";
+    menu.setAttribute("role", "listbox");
+    menu.hidden = true;
+    wrapper.appendChild(menu);
+
+    let activeIndex = -1;
+
+    function close() {
+      menu.hidden = true;
+      activeIndex = -1;
+    }
+
+    function choose(option) {
+      input.value = option.value;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      close();
+    }
+
+    function render() {
+      const query = input.value.trim().toLocaleLowerCase();
+      if (query.length < 3) {
+        menu.replaceChildren();
+        close();
+        return;
+      }
+      const matches = options.filter((option) => option.value.toLocaleLowerCase().includes(query)).slice(0, 8);
+      menu.replaceChildren();
+      activeIndex = -1;
+      if (!matches.length || document.activeElement !== input) {
+        close();
+        return;
+      }
+
+      matches.forEach((option, index) => {
+        const item = document.createElement("button");
+        item.type = "button";
+        item.className = "autocomplete-option";
+        item.setAttribute("role", "option");
+        item.dataset.index = String(index);
+
+        const media = document.createElement("span");
+        media.className = "autocomplete-option-media";
+        if (option.dataset.picture) {
+          const image = document.createElement("img");
+          image.src = option.dataset.picture;
+          image.alt = "";
+          image.addEventListener("error", () => {
+            media.replaceChildren();
+            media.innerHTML = '<i class="fa-solid fa-box" aria-hidden="true"></i>';
+          });
+          media.appendChild(image);
+        } else {
+          media.innerHTML = '<i class="fa-solid fa-box" aria-hidden="true"></i>';
+        }
+        const title = document.createElement("span");
+        title.className = "autocomplete-option-title";
+        title.textContent = option.value;
+        item.append(media, title);
+        item.addEventListener("mousedown", (event) => {
+          event.preventDefault();
+          choose(option);
+        });
+        menu.appendChild(item);
+      });
+      menu.hidden = false;
+    }
+
+    input.addEventListener("focus", render);
+    input.addEventListener("input", render);
+    input.addEventListener("keydown", (event) => {
+      const items = Array.from(menu.querySelectorAll(".autocomplete-option"));
+      if (event.key === "Escape") {
+        close();
+      } else if (event.key === "ArrowDown" && items.length) {
+        event.preventDefault();
+        activeIndex = (activeIndex + 1) % items.length;
+      } else if (event.key === "ArrowUp" && items.length) {
+        event.preventDefault();
+        activeIndex = (activeIndex - 1 + items.length) % items.length;
+      } else if (event.key === "Enter" && activeIndex >= 0 && items[activeIndex]) {
+        event.preventDefault();
+        choose(options.find((option) => option.value === items[activeIndex].querySelector(".autocomplete-option-title").textContent));
+        return;
+      }
+      items.forEach((item, index) => item.classList.toggle("is-active", index === activeIndex));
+    });
+    document.addEventListener("click", (event) => {
+      if (!wrapper.contains(event.target)) close();
+    });
+  }
+
+  document.querySelectorAll("input[list]").forEach((input) => {
+    const list = document.getElementById(input.getAttribute("list"));
+    if (list) setupAutocomplete(input, list);
+  });
+
+  const observer = new MutationObserver((mutations) => {
+    mutations.forEach((mutation) => {
+      mutation.addedNodes.forEach((node) => {
+        if (node.nodeType !== Node.ELEMENT_NODE) return;
+        const inputs = node.matches?.("input[list]") ? [node] : Array.from(node.querySelectorAll?.("input[list]") || []);
+        inputs.forEach((input) => {
+          const list = document.getElementById(input.getAttribute("list"));
+          if (list) setupAutocomplete(input, list);
+        });
+      });
+    });
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+
   const mappings = {
     quantity: "suggestedQuantity",
     unit: "suggestedUnit",
@@ -19,7 +148,7 @@
   }
 
   function findOption(input) {
-    const listId = input.getAttribute("list");
+    const listId = input.dataset.autocompleteSource || input.getAttribute("list");
     const list = listId ? document.getElementById(listId) : null;
     if (!list) {
       return null;

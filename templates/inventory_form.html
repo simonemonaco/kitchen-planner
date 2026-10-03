@@ -16,16 +16,28 @@
       <input type="hidden" name="notes" value="{{ item.notes or '' }}">
       <input type="hidden" name="expiry_estimated" value="{{ item.expiry_estimated or 0 }}" data-prior-expiry-estimated>
       <input type="hidden" name="preparation_status" value="{{ item.preparation_status or 'none' }}">
+      <input type="hidden" name="recipe_id" value="{{ item.recipe_id or '' }}" data-inventory-recipe-id>
 
+      {% if mode == "add" %}
       <label>
+        Cosa vuoi aggiungere
+        <select name="inventory_kind" data-inventory-kind>
+          <option value="product" {% if not item.recipe_id %}selected{% endif %}>Prodotto</option>
+          <option value="recipe" {% if item.recipe_id %}selected{% endif %}>Ricetta lavorata</option>
+        </select>
+      </label>
+      {% endif %}
+
+      <label data-inventory-product-picker {% if item.recipe_id %}hidden{% endif %}>
         Nome prodotto
-        <input name="name" value="{{ item.name }}" required autocomplete="off" list="inventory-prior-options" data-prior-name>
+        <input name="name" value="{% if not item.recipe_id %}{{ item.name }}{% endif %}" {% if not item.recipe_id %}required{% endif %} autocomplete="off" list="inventory-prior-options" data-prior-name>
       </label>
       <datalist id="inventory-prior-options">
         {% for prior in prior_options %}
           <option
             value="{{ prior.name }}"
             data-id="{{ prior.id }}"
+            data-picture="{{ prior.picture or '' }}"
             data-default-location="{{ prior.default_location or 'dispensa' }}"
             data-typical-quantity="{{ prior.typical_quantity|qty }}"
             data-typical-unit="{{ prior.typical_unit or '' }}"
@@ -33,6 +45,19 @@
             data-suggested-unit="{{ prior.suggested_unit or 'pz' }}"
             data-typical-shelf-life-days="{{ prior.typical_shelf_life_days or '' }}">
           </option>
+        {% endfor %}
+      </datalist>
+      <label data-inventory-recipe-picker {% if not item.recipe_id %}hidden{% endif %}>
+        Ricetta
+        {% if mode == "edit" and item.recipe_id %}
+          <a class="field-help" href="{{ url_for('edit_recipe', recipe_id=item.recipe_id) }}">{{ item.recipe_name or item.name }} · modifica ricetta</a>
+        {% else %}
+          <input name="recipe_name" value="{{ item.recipe_name or '' }}" {% if item.recipe_id %}required{% endif %} autocomplete="off" list="inventory-recipe-options" data-autocomplete-source="inventory-recipe-options" data-inventory-recipe-name>
+        {% endif %}
+      </label>
+      <datalist id="inventory-recipe-options">
+        {% for recipe in recipe_options or [] %}
+          <option value="{{ recipe.name }}" data-recipe-id="{{ recipe.id }}" data-picture="{{ recipe.picture or '' }}"></option>
         {% endfor %}
       </datalist>
 
@@ -107,6 +132,8 @@
       <div class="form-actions">
         {% if mode == "edit" and item.item_prior_id %}
           <a class="button secondary" href="{{ url_for('edit_prior', prior_id=item.item_prior_id) }}"><i class="fa-solid fa-sliders" aria-hidden="true"></i> Modifica prior</a>
+        {% elif mode == "edit" and item.recipe_id %}
+          <a class="button secondary" href="{{ url_for('edit_recipe', recipe_id=item.recipe_id) }}"><i class="fa-solid fa-utensils" aria-hidden="true"></i> Modifica prior</a>
         {% endif %}
         <a class="button secondary" href="{{ url_for('index') }}"><i class="fa-solid fa-xmark" aria-hidden="true"></i> Annulla</a>
         <button class="button" type="submit" data-prior-submit-button>
@@ -116,4 +143,45 @@
       </div>
     </form>
   </section>
+{% endblock %}
+
+{% block page_scripts %}
+<script>
+(() => {
+  const kind = document.querySelector('[data-inventory-kind]');
+  const productPicker = document.querySelector('[data-inventory-product-picker]');
+  const recipePicker = document.querySelector('[data-inventory-recipe-picker]');
+  const productInput = document.querySelector('[data-prior-name]');
+  const recipeInput = document.querySelector('[data-inventory-recipe-name]');
+  const recipeId = document.querySelector('[data-inventory-recipe-id]');
+  const location = document.querySelector('[name="location"]');
+  if (kind && productPicker && recipePicker) {
+    const update = () => {
+      const isRecipe = kind.value === 'recipe';
+      productPicker.hidden = isRecipe;
+      recipePicker.hidden = !isRecipe;
+      productInput.required = !isRecipe;
+      if (recipeInput) recipeInput.required = isRecipe;
+      if (isRecipe && location && !location.dataset.recipeLocationSet) {
+        location.value = 'frigo';
+        location.dataset.recipeLocationSet = '1';
+      }
+      if (!isRecipe && recipeId) recipeId.value = '';
+    };
+    kind.addEventListener('change', update);
+    update();
+  }
+  if (recipeInput && recipeId) {
+    const list = document.getElementById(recipeInput.dataset.autocompleteSource || recipeInput.getAttribute('list'));
+    const sync = () => {
+      const value = recipeInput.value.trim().toLocaleLowerCase();
+      const option = Array.from(list?.options || []).find(item => item.value.trim().toLocaleLowerCase() === value);
+      recipeId.value = option?.dataset.recipeId || '';
+    };
+    recipeInput.addEventListener('input', sync);
+    recipeInput.addEventListener('change', sync);
+    sync();
+  }
+})();
+</script>
 {% endblock %}

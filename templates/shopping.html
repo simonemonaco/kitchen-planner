@@ -24,6 +24,7 @@
           <option
             value="{{ prior.name }}"
             data-id="{{ prior.id }}"
+            data-picture="{{ prior.picture or '' }}"
             data-default-location="{{ prior.default_location or 'dispensa' }}"
             data-typical-quantity="{{ prior.typical_quantity|qty }}"
             data-typical-unit="{{ prior.typical_unit or '' }}"
@@ -89,7 +90,7 @@
                       <input type="hidden" name="direction" value="dec">
                       <button class="small-button secondary icon-only" type="submit" aria-label="Diminuisci quantita'"><i class="fa-solid fa-minus" aria-hidden="true"></i></button>
                     </form>
-                    <button class="shopping-qty-line quantity-edit-trigger" type="button" data-edit-quantity data-item-id="{{ item.id }}" data-item-name="{{ item.name }}" data-item-quantity="{{ item.quantity }}" data-item-unit="{{ item.unit }}">{{ item.quantity|qty }} {{ item.unit }}</button>
+                    <button class="shopping-qty-line quantity-edit-trigger" type="button" data-qty-pill data-edit-quantity data-item-id="{{ item.id }}" data-item-name="{{ item.name }}" data-item-quantity="{{ item.quantity }}" data-item-unit="{{ item.unit }}">{{ item.quantity|qty }} {{ item.unit }}</button>
                     <form action="{{ url_for('adjust_shopping_quantity', item_id=item.id) }}" method="post" data-qty-form>
                       <input type="hidden" name="direction" value="inc">
                       <button class="small-button secondary icon-only" type="submit" aria-label="Aumenta quantita'"><i class="fa-solid fa-plus" aria-hidden="true"></i></button>

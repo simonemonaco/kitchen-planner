@@ -16,6 +16,7 @@
         <option
           value="{{ prior.name }}"
           data-id="{{ prior.id }}"
+          data-picture="{{ prior.picture or '' }}"
           data-default-location="{{ prior.default_location or 'dispensa' }}"
           data-typical-quantity="{{ prior.typical_quantity|qty }}"
           data-typical-unit="{{ prior.typical_unit or '' }}"

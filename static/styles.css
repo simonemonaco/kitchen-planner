@@ -1032,6 +1032,76 @@ legend { padding: 0 6px; color: var(--brand-dark); font-weight: 850; }
   margin: 0 0 14px;
 }
 
+.autocomplete-field {
+  position: relative;
+  width: 100%;
+}
+
+.autocomplete-menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 5px);
+  right: 0;
+  left: 0;
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 14px 28px rgba(31, 42, 36, 0.16);
+}
+
+.autocomplete-option {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 10px;
+  padding: 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.autocomplete-option:hover,
+.autocomplete-option.is-active {
+  background: var(--surface-strong);
+}
+
+.autocomplete-option-media {
+  display: grid;
+  flex: 0 0 34px;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #e6f0e9;
+  color: var(--brand);
+}
+
+.autocomplete-option-media img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.autocomplete-option-title {
+  overflow: hidden;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preparation-badge.recipe,
+.preparation-label.recipe {
+  color: var(--brand);
+}
+
 .purchase-form {
   display: grid;
   gap: 10px;

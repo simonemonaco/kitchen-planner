@@ -407,15 +407,20 @@ def register_routes(app: Flask) -> None:
                     item=data,
                     mode="add",
                     prior_options=list_item_prior_options(),
+                    recipe_options=list_recipe_options(),
                 ), 400
 
-            prior_id = ensure_item_prior(
-                data,
-                existing_prior_id=data.get("item_prior_id"),
-                update_existing=False,
-            )
-            create_inventory_item(prior_id, data)
-            flash("Prodotto aggiunto all'inventario.", "success")
+            if data.get("recipe_id"):
+                create_inventory_item(None, data)
+                flash("Ricetta aggiunta all'inventario.", "success")
+            else:
+                prior_id = ensure_item_prior(
+                    data,
+                    existing_prior_id=data.get("item_prior_id"),
+                    update_existing=False,
+                )
+                create_inventory_item(prior_id, data)
+                flash("Prodotto aggiunto all'inventario.", "success")
             return redirect(url_for("index"))
 
         return render_template(
@@ -423,6 +428,7 @@ def register_routes(app: Flask) -> None:
             item=empty_inventory_form(),
             mode="add",
             prior_options=list_item_prior_options(),
+            recipe_options=list_recipe_options(),
         )
 
     @app.route("/inventory/<int:item_id>/edit", methods=("GET", "POST"))
@@ -440,17 +446,21 @@ def register_routes(app: Flask) -> None:
                     flash(error, "error")
                 return render_template(
                     "inventory_form.html",
-                    item=data | {"id": item_id, "item_prior_id": item["item_prior_id"]},
+                    item=data | {"id": item_id, "item_prior_id": item.get("item_prior_id"), "recipe_id": item.get("recipe_id")},
                     mode="edit",
                     prior_options=list_item_prior_options(),
+                    recipe_options=list_recipe_options(),
                 ), 400
 
-            prior_id = ensure_item_prior(
-                data,
-                existing_prior_id=data.get("item_prior_id") or item["item_prior_id"],
-                update_existing=False,
-            )
-            update_inventory_item(item_id, prior_id, data)
+            if data.get("recipe_id"):
+                update_inventory_item(item_id, None, data)
+            else:
+                prior_id = ensure_item_prior(
+                    data,
+                    existing_prior_id=data.get("item_prior_id") or item.get("item_prior_id"),
+                    update_existing=False,
+                )
+                update_inventory_item(item_id, prior_id, data)
             flash("Prodotto aggiornato.", "success")
             return redirect(url_for("index"))
 
@@ -468,6 +478,7 @@ def register_routes(app: Flask) -> None:
             item=dict(item),
             mode="edit",
             prior_options=list_item_prior_options(),
+            recipe_options=list_recipe_options(),
             purchased_at=purchased_at,
         )
 
@@ -477,6 +488,9 @@ def register_routes(app: Flask) -> None:
         if not item:
             flash("Prodotto non trovato.", "error")
             return redirect(url_for("index"))
+        if item.get("recipe_id"):
+            flash("Le ricette lavorate sono sempre visualizzate in pezzi.", "error")
+            return redirect(url_for("edit_inventory_item", item_id=item_id))
         prior = get_item_prior(int(item["item_prior_id"])) or {}
         current = prior.get("inventory_display_unit") or "measure"
         update_item_prior(int(item["item_prior_id"]), {"inventory_display_unit": "pz" if current != "pz" else "measure"})
@@ -489,6 +503,11 @@ def register_routes(app: Flask) -> None:
         if not item:
             flash("Prodotto non trovato.", "error")
             return redirect(url_for("index"))
+
+        if item.get("recipe_id"):
+            delete_inventory_item(item_id)
+            flash("Ricetta lavorata rimossa dall'inventario.", "success")
+            return redirect_inventory_context()
 
         prior = get_item_prior(int(item["item_prior_id"])) or {}
         other_inventory = (
@@ -543,6 +562,10 @@ def register_routes(app: Flask) -> None:
         if not item:
             flash("Prodotto non trovato.", "error")
             return redirect(url_for("index"))
+
+        if item.get("recipe_id"):
+            flash("Le ricette lavorate non possono essere trasformate.", "error")
+            return redirect_inventory_context()
 
         status = clean_text(request.form.get("preparation_status")).lower()
         if status not in {"cotto", "aperto"}:
@@ -609,6 +632,7 @@ def register_routes(app: Flask) -> None:
             flash("Prodotto non trovato.", "error")
             return redirect(url_for("index"))
 
+        prior = get_item_prior(int(item["item_prior_id"])) if item.get("item_prior_id") else None
         direction = clean_text(request.form.get("direction")).lower()
         if direction == "edit":
             try:
@@ -624,7 +648,6 @@ def register_routes(app: Flask) -> None:
                     return jsonify({"ok": False, "error": error}), 400
                 flash(error, "error")
                 return redirect(url_for("index"))
-            prior = get_item_prior(int(item["item_prior_id"]))
             payload = item | {"quantity": new_quantity, "unit": new_unit}
             if is_piece_unit(new_unit):
                 payload["quantity_pz"] = new_quantity
@@ -634,7 +657,7 @@ def register_routes(app: Flask) -> None:
                 payload["measure_unit"] = item.get("measure_unit") or new_unit
                 payload["quantity_pz"] = piece_quantity_from_measure(new_quantity, payload["measure_unit"], prior)
             old_quantity = float(item.get("quantity") or 0)
-            update_inventory_item(item_id, int(item["item_prior_id"]), payload, quantity_delta=new_quantity - old_quantity)
+            update_inventory_item(item_id, item.get("item_prior_id"), payload, quantity_delta=new_quantity - old_quantity)
             if is_xhr:
                 today_change = get_today_quantity_change(item_id, new_unit)
                 return jsonify({"ok": True, "qty_display": f"{_format_qty(new_quantity)} {new_unit}", "quantity": new_quantity, "unit": new_unit, "today_quantity_change": today_change, "today_quantity_change_display": f"{_format_qty(abs(today_change))} {new_unit}"})
@@ -661,8 +684,8 @@ def register_routes(app: Flask) -> None:
         payload = {
             "quantity": new_quantity,
             "unit": new_unit,
-            "quantity_pz": new_quantity if is_piece_unit(new_unit) else piece_quantity_from_measure(new_quantity, new_unit, get_item_prior(int(item["item_prior_id"]))),
-            "measure_quantity": (piece_measure_quantity(new_quantity, get_item_prior(int(item["item_prior_id"])))[0] if is_piece_unit(new_unit) else new_quantity),
+            "quantity_pz": new_quantity if is_piece_unit(new_unit) else piece_quantity_from_measure(new_quantity, new_unit, prior),
+            "measure_quantity": (piece_measure_quantity(new_quantity, prior)[0] if is_piece_unit(new_unit) else new_quantity),
             "location": item["location"],
             "preparation_status": item.get("preparation_status") or "none",
             "expiry_date": item.get("expiry_date"),
@@ -677,7 +700,7 @@ def register_routes(app: Flask) -> None:
             quantity_delta = new_quantity - (current_quantity * old_factor / new_factor)
         update_inventory_item(
             item_id,
-            int(item["item_prior_id"]),
+            item.get("item_prior_id"),
             payload,
             quantity_delta=quantity_delta,
         )
@@ -967,6 +990,8 @@ def register_routes(app: Flask) -> None:
             return jsonify({
                 "ok": True,
                 "qty_display": f"{_format_qty(new_quantity)} {new_unit}",
+                "quantity": new_quantity,
+                "unit": new_unit,
             })
         return redirect(url_for("shopping"))
 
@@ -1449,6 +1474,7 @@ def register_routes(app: Flask) -> None:
 def empty_inventory_form() -> dict[str, Any]:
     return {
         "item_prior_id": "",
+        "recipe_id": "",
         "name": "",
         "quantity": 1,
         "unit": "pz",
@@ -1584,6 +1610,9 @@ def resolve_expiry(
 
 
 def inventory_form_data(form: Any) -> dict[str, Any]:
+    recipe_requested = form.get("inventory_kind") == "recipe"
+    recipe_id = parse_optional_int(form.get("recipe_id"))
+    recipe = get_recipe_summary(recipe_id)
     selected_prior = get_selected_prior(form.get("item_prior_id"), form.get("name"))
     typical_shelf_life_days = (
         selected_prior["typical_shelf_life_days"] if selected_prior else None
@@ -1600,9 +1629,12 @@ def inventory_form_data(form: Any) -> dict[str, Any]:
     measure_quantity = parse_optional_quantity(form.get("measure_quantity"))
     location = form.get("location", "dispensa")
     return {
-        "item_prior_id": parse_optional_int(form.get("item_prior_id")),
-        "name": clean_text(form.get("name")),
-        "category": "Altro",
+        "item_prior_id": None if recipe else parse_optional_int(form.get("item_prior_id")),
+        "recipe_id": recipe["id"] if recipe else None,
+        "recipe_requested": recipe_requested,
+        "name": recipe["name"] if recipe else clean_text(form.get("name")),
+        "recipe_name": recipe["name"] if recipe else "",
+        "category": "Piatti pronti" if recipe else "Altro",
         "typical_quantity": quantity,
         "typical_unit": unit,
         "typical_shelf_life_days": typical_shelf_life_days,
@@ -1740,6 +1772,7 @@ def get_prior_ids_added_today() -> set[int]:
     return {
         int(item["item_prior_id"])
         for item in items
+        if item.get("item_prior_id")
         if (item.get("updated_at") or "")[:10] == today_prefix
     }
 
@@ -1858,12 +1891,14 @@ def prior_form_data(form: Any) -> dict[str, Any]:
 
 
 def validate_inventory_data(data: dict[str, Any]) -> list[str]:
-    errors = validate_prior_data(data)
+    if data.get("recipe_requested") and not data.get("recipe_id"):
+        return ["Seleziona una ricetta dall'elenco dei suggerimenti."]
+    errors = [] if data.get("recipe_id") else validate_prior_data(data)
     if data["quantity"] <= 0:
         errors.append("La quantita' deve essere maggiore di zero.")
     if data["location"] not in LOCATIONS:
         errors.append("Scegli frigo o dispensa.")
-    if data.get("preparation_status") not in {"none", "cotto", "aperto"}:
+    if not data.get("recipe_id") and data.get("preparation_status") not in {"none", "cotto", "aperto"}:
         errors.append("La modalità di preparazione non è valida.")
     return errors
 
@@ -2134,6 +2169,18 @@ def list_item_prior_options() -> list[dict[str, Any]]:
         prior["suggested_quantity"] = latest.get("quantity") if latest else (prior.get("typical_quantity_pz") or 1)
         prior["suggested_unit"] = latest.get("unit") if latest else "pz"
     return sorted(priors, key=lambda row: (row.get("name") or "").casefold())
+
+
+def list_recipe_options() -> list[dict[str, Any]]:
+    response = get_supabase().table("recipes").select("id,name,picture").order("name").execute()
+    return response.data or []
+
+
+def get_recipe_summary(recipe_id: int | None) -> dict[str, Any] | None:
+    if not recipe_id:
+        return None
+    response = get_supabase().table("recipes").select("id,name,picture").eq("id", recipe_id).limit(1).execute()
+    return response.data[0] if response.data else None
 
 
 def empty_meal_form() -> dict[str, Any]:
@@ -2576,7 +2623,7 @@ def inventory_quantity_in_unit(item: dict[str, Any], prior: dict[str, Any] | Non
     return convert_quantity(float(measure_quantity), measure_unit, target_unit)
 
 
-def inventory_storage_payload(item_prior_id: int, data: dict[str, Any], prior: dict[str, Any] | None) -> dict[str, Any]:
+def inventory_storage_payload(item_prior_id: int | None, data: dict[str, Any], prior: dict[str, Any] | None) -> dict[str, Any]:
     quantities = resolve_inventory_quantities(data, prior)
     # Keep quantity/unit populated for older code and older clients.
     display_unit = (prior or {}).get("inventory_display_unit") or ("pz" if is_piece_unit(data.get("unit")) else "measure")
@@ -2586,6 +2633,7 @@ def inventory_storage_payload(item_prior_id: int, data: dict[str, Any], prior: d
         legacy_quantity, legacy_unit = quantities["measure_quantity"], quantities["measure_unit"]
     return {
         "item_prior_id": item_prior_id,
+        "recipe_id": data.get("recipe_id"),
         "quantity": legacy_quantity if legacy_quantity is not None else 0,
         "unit": legacy_unit or "pz",
         "quantity_pz": quantities["quantity_pz"],
@@ -2639,7 +2687,10 @@ def aggregate_meal_ingredients(meal: dict[str, Any]) -> list[dict[str, Any]]:
                 row["required"] += float(ingredient["quantity"]) * scale * factor
             row["recipes"].append(recipe["name"])
     supabase = get_supabase()
-    inventory = supabase.table("inventory_items").select("item_prior_id,quantity,unit,quantity_pz,measure_quantity").execute().data or []
+    inventory = [
+        row for row in (supabase.table("inventory_items").select("item_prior_id,quantity,unit,quantity_pz,measure_quantity").execute().data or [])
+        if row.get("item_prior_id")
+    ]
     shopping = supabase.table("shopping_items").select("item_prior_id,quantity,unit,quantity_pz,measure_quantity").execute().data or []
     prior_map = load_item_prior_map([int(row["item_prior_id"]) for row in inventory + shopping])
 
@@ -3101,15 +3152,17 @@ def load_item_prior_map(prior_ids: list[int]) -> dict[int, dict[str, Any]]:
 
 
 def merge_item_with_prior(item: dict[str, Any], prior: dict[str, Any] | None) -> dict[str, Any]:
+    recipe = get_recipe_summary(item.get("recipe_id")) if item.get("recipe_id") else None
     prior = prior or {}
     merged = item | {
-        "name": prior.get("name", ""),
-        "category": prior.get("category", ""),
+        "name": recipe.get("name") if recipe else prior.get("name", ""),
+        "recipe_name": recipe.get("name") if recipe else "",
+        "category": "Piatti pronti" if recipe else prior.get("category", ""),
         "typical_quantity": prior.get("typical_quantity"),
         "typical_unit": prior.get("typical_unit"),
         "typical_shelf_life_days": prior.get("typical_shelf_life_days"),
         "default_location": prior.get("default_location"),
-        "picture": prior.get("picture"),
+        "picture": recipe.get("picture") if recipe else prior.get("picture"),
         
         "prior_notes": prior.get("notes", ""),
     }
@@ -3125,7 +3178,7 @@ def merge_item_with_prior(item: dict[str, Any], prior: dict[str, Any] | None) ->
         measure_quantity, measure_unit = piece_measure_quantity(float(quantity_pz), prior)
     else:
         measure_unit = clean_text(item.get("unit")) if not is_piece_unit(item.get("unit")) else None
-    display = prior.get("inventory_display_unit") or ("pz" if quantity_pz is not None and measure_quantity is None else "measure")
+    display = "pz" if recipe else (prior.get("inventory_display_unit") or ("pz" if quantity_pz is not None and measure_quantity is None else "measure"))
     if display == "pz" and quantity_pz is not None:
         display_quantity, display_unit = quantity_pz, "pz"
     else:
@@ -3145,7 +3198,7 @@ def list_inventory_items(location: str | None = None) -> list[dict[str, Any]]:
     if location:
         query = query.eq("location", location)
     inventory_items = query.execute().data or []
-    prior_map = load_item_prior_map([int(item["item_prior_id"]) for item in inventory_items])
+    prior_map = load_item_prior_map([int(item["item_prior_id"]) for item in inventory_items if item.get("item_prior_id")])
     changes = (
         get_supabase()
         .table("inventory_quantity_changes")
@@ -3166,7 +3219,7 @@ def list_inventory_items(location: str | None = None) -> list[dict[str, Any]]:
             )
         )
     merged = [
-        merge_item_with_prior(item, prior_map.get(int(item["item_prior_id"])))
+        merge_item_with_prior(item, prior_map.get(int(item["item_prior_id"])) if item.get("item_prior_id") else None)
         | {"today_quantity_change": change_map.get(int(item["id"]), 0)}
         for item in inventory_items
     ]
@@ -3187,17 +3240,17 @@ def get_inventory_item(item_id: int) -> dict[str, Any] | None:
     if not response.data:
         return None
     item = response.data[0]
-    prior = get_item_prior(int(item["item_prior_id"]))
+    prior = get_item_prior(int(item["item_prior_id"])) if item.get("item_prior_id") else None
     return merge_item_with_prior(item, prior)
 
 
 def create_inventory_item(
-    item_prior_id: int,
+    item_prior_id: int | None,
     data: dict[str, Any],
     *,
     merge_similar: bool = False,
 ) -> int:
-    prior = get_item_prior(item_prior_id)
+    prior = get_item_prior(item_prior_id) if item_prior_id else None
     if merge_similar:
         existing = find_similar_inventory_item(item_prior_id, data.get("expiry_date"))
         if existing:
@@ -3229,7 +3282,8 @@ def create_inventory_item(
     if not response.data:
         raise RuntimeError("Inserimento inventario non riuscito.")
     item_id = int(response.data[0]["id"])
-    record_inventory_quantity_change(item_id, float(data["quantity"]), data["unit"])
+    if not data.get("recipe_id"):
+        record_inventory_quantity_change(item_id, float(data["quantity"]), data["unit"])
     return item_id
 
 
@@ -3253,14 +3307,15 @@ def find_similar_inventory_item(item_prior_id: int, expiry_date: str | None) -> 
 
 def update_inventory_item(
     item_id: int,
-    item_prior_id: int,
+    item_prior_id: int | None,
     data: dict[str, Any],
     *,
     quantity_delta: float | None = None,
 ) -> None:
-    payload = inventory_storage_payload(item_prior_id, data, get_item_prior(item_prior_id))
+    prior = get_item_prior(item_prior_id) if item_prior_id else None
+    payload = inventory_storage_payload(item_prior_id, data, prior)
     get_supabase().table("inventory_items").update(payload).eq("id", item_id).execute()
-    if quantity_delta:
+    if quantity_delta and not data.get("recipe_id"):
         record_inventory_quantity_change(item_id, quantity_delta, data["unit"])
 
 

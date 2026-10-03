@@ -26,7 +26,11 @@
         const data = await resp.json();
         if (data.ok) {
           const pill = wrapper.querySelector("[data-qty-pill]");
-          if (pill) pill.textContent = data.qty_display;
+          if (pill) {
+            pill.textContent = data.qty_display;
+            if (data.quantity != null) pill.dataset.itemQuantity = data.quantity;
+            if (data.unit) pill.dataset.itemUnit = data.unit;
+          }
           const change = wrapper.closest(".item-main")?.querySelector("[data-today-quantity-change]");
           if (change) {
             const amount = Number(data.today_quantity_change || 0);
