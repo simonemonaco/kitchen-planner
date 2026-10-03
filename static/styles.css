@@ -521,7 +521,9 @@ button {
 }
 
 .pantry-card:has(.preparation-badge.cotto) .product-media img,
-.item-row:has(.preparation-badge.cotto) .product-media img {
+.item-row:has(.preparation-badge.cotto) .product-media img,
+.pantry-card:has(.preparation-badge.recipe) .product-media img,
+.item-row:has(.preparation-badge.recipe) .product-media img {
   filter: sepia(.55) saturate(1.35) hue-rotate(335deg);
 }
 
@@ -531,7 +533,8 @@ button {
 }
 
 .product-media:has(.preparation-badge.cotto)::after,
-.product-media:has(.preparation-badge.aperto)::after {
+.product-media:has(.preparation-badge.aperto)::after,
+.product-media:has(.preparation-badge.recipe)::after {
   content: "";
   position: absolute;
   z-index: 1;
@@ -540,6 +543,10 @@ button {
 }
 
 .product-media:has(.preparation-badge.cotto)::after {
+  background: rgba(232, 120, 36, .2);
+}
+
+.product-media:has(.preparation-badge.recipe)::after {
   background: rgba(232, 120, 36, .2);
 }
 
@@ -563,6 +570,7 @@ button {
 }
 
 .preparation-badge.cotto { background: #e87824; }
+.preparation-badge.recipe { background: #e87824; }
 .preparation-badge.aperto { background: #3ca8d8; }
 .preparation-label { margin: -2px 0 5px !important; font-weight: 850; }
 .preparation-label.cotto { color: #d56418; }
@@ -1097,9 +1105,9 @@ legend { padding: 0 6px; color: var(--brand-dark); font-weight: 850; }
   white-space: nowrap;
 }
 
-.preparation-badge.recipe,
-.preparation-label.recipe {
-  color: var(--brand);
+.recipe-title-icon {
+  color: #e87824;
+  font-size: .8em;
 }
 
 .purchase-form {

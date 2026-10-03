@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from calendar import monthrange
 from html import escape as html_escape
 from difflib import SequenceMatcher
 from datetime import UTC, date, datetime, timedelta
@@ -506,7 +507,7 @@ def register_routes(app: Flask) -> None:
 
         if item.get("recipe_id"):
             delete_inventory_item(item_id)
-            flash("Ricetta lavorata rimossa dall'inventario.", "success")
+            flash("Ricetta cucinata rimossa dall'inventario.", "success")
             return redirect_inventory_context()
 
         prior = get_item_prior(int(item["item_prior_id"])) or {}
@@ -1609,6 +1610,13 @@ def resolve_expiry(
     return None, 0
 
 
+def add_calendar_months(day: date, months: int) -> date:
+    month_index = day.month - 1 + months
+    year = day.year + month_index // 12
+    month = month_index % 12 + 1
+    return day.replace(year=year, month=month, day=min(day.day, monthrange(year, month)[1]))
+
+
 def inventory_form_data(form: Any) -> dict[str, Any]:
     recipe_requested = form.get("inventory_kind") == "recipe"
     recipe_id = parse_optional_int(form.get("recipe_id"))
@@ -1628,6 +1636,12 @@ def inventory_form_data(form: Any) -> dict[str, Any]:
     quantity_pz = parse_optional_quantity(form.get("quantity_pz"))
     measure_quantity = parse_optional_quantity(form.get("measure_quantity"))
     location = form.get("location", "dispensa")
+    if recipe and not expiry_date:
+        if location == "freezer":
+            expiry_date = add_calendar_months(date.today(), 2).isoformat()
+        elif location == "frigo":
+            expiry_date = (date.today() + timedelta(days=4)).isoformat()
+        expiry_estimated = 1 if expiry_date else 0
     return {
         "item_prior_id": None if recipe else parse_optional_int(form.get("item_prior_id")),
         "recipe_id": recipe["id"] if recipe else None,
@@ -1858,13 +1872,7 @@ def adjust_quantity_with_unit(
     unit: str | None,
     direction: str,
 ) -> tuple[float, str]:
-    normalized = clean_text(unit).casefold()
     current_unit = clean_text(unit, "pz")
-
-    if direction == "dec" and normalized in {"kg", "l", "lt"} and current_quantity <= 1.0:
-        converted_unit = "g" if normalized == "kg" else "ml"
-        converted_quantity = (current_quantity * 1000.0) - 100.0
-        return round(converted_quantity, 4), converted_unit
 
     step = quantity_adjust_step(current_unit)
     new_quantity = current_quantity + step if direction == "inc" else current_quantity - step
@@ -2127,15 +2135,20 @@ def list_item_priors(query: str = "") -> list[dict[str, Any]]:
     shopping_count: dict[int, int] = {}
     history_count: dict[int, int] = {}
 
+    # Recipe-backed inventory rows do not have an item_prior_id.  They are
+    # valid inventory records, but must not contribute to prior usage counts.
     for row in inventory_rows:
-        prior_id = int(row["item_prior_id"])
-        inventory_count[prior_id] = inventory_count.get(prior_id, 0) + 1
+        prior_id = parse_optional_int(row.get("item_prior_id"))
+        if prior_id is not None:
+            inventory_count[prior_id] = inventory_count.get(prior_id, 0) + 1
     for row in shopping_rows:
-        prior_id = int(row["item_prior_id"])
-        shopping_count[prior_id] = shopping_count.get(prior_id, 0) + 1
+        prior_id = parse_optional_int(row.get("item_prior_id"))
+        if prior_id is not None:
+            shopping_count[prior_id] = shopping_count.get(prior_id, 0) + 1
     for row in history_rows:
-        prior_id = int(row["item_prior_id"])
-        history_count[prior_id] = history_count.get(prior_id, 0) + 1
+        prior_id = parse_optional_int(row.get("item_prior_id"))
+        if prior_id is not None:
+            history_count[prior_id] = history_count.get(prior_id, 0) + 1
 
     result = []
     for prior in priors:
@@ -3151,7 +3164,12 @@ def load_item_prior_map(prior_ids: list[int]) -> dict[int, dict[str, Any]]:
     return {int(row["id"]): row for row in (response.data or [])}
 
 
-def merge_item_with_prior(item: dict[str, Any], prior: dict[str, Any] | None) -> dict[str, Any]:
+def merge_item_with_prior(
+    item: dict[str, Any],
+    prior: dict[str, Any] | None,
+    *,
+    preserve_item_unit: bool = False,
+) -> dict[str, Any]:
     recipe = get_recipe_summary(item.get("recipe_id")) if item.get("recipe_id") else None
     prior = prior or {}
     merged = item | {
@@ -3183,6 +3201,9 @@ def merge_item_with_prior(item: dict[str, Any], prior: dict[str, Any] | None) ->
         display_quantity, display_unit = quantity_pz, "pz"
     else:
         display_quantity, display_unit = measure_quantity, measure_unit
+    if preserve_item_unit:
+        display_quantity = item.get("quantity")
+        display_unit = item.get("unit") or "pz"
     return merged | {
         "quantity_pz": quantity_pz,
         "measure_quantity": measure_quantity,
@@ -3394,7 +3415,14 @@ def add_or_increment_shopping_item(
 def list_shopping_items() -> list[dict[str, Any]]:
     items = get_supabase().table("shopping_items").select("*").execute().data or []
     prior_map = load_item_prior_map([int(item["item_prior_id"]) for item in items])
-    merged = [merge_item_with_prior(item, prior_map.get(int(item["item_prior_id"]))) for item in items]
+    merged = [
+        merge_item_with_prior(
+            item,
+            prior_map.get(int(item["item_prior_id"])),
+            preserve_item_unit=True,
+        )
+        for item in items
+    ]
     category_order = {cat: i for i, cat in enumerate(CATEGORIES)}
     return sorted(
         merged,
@@ -3411,7 +3439,7 @@ def get_shopping_item(item_id: int) -> dict[str, Any] | None:
         return None
     item = response.data[0]
     prior = get_item_prior(int(item["item_prior_id"]))
-    return merge_item_with_prior(item, prior)
+    return merge_item_with_prior(item, prior, preserve_item_unit=True)
 
 
 def delete_shopping_item(item_id: int) -> None:

@@ -88,7 +88,7 @@
                      data-created="{{ item.created_at or '' }}">
               <div class="product-media">
                 {% if item.recipe_id %}
-                  <span class="preparation-badge recipe" title="Ricetta lavorata"><i class="fa-solid fa-bowl-food" aria-hidden="true"></i><span class="sr-only">Ricetta lavorata</span></span>
+                  <span class="preparation-badge recipe" title="Ricetta cucinata"><i class="fa-solid fa-fire" aria-hidden="true"></i><span class="sr-only">Ricetta cucinata</span></span>
                 {% elif item.preparation_status and item.preparation_status != 'none' %}
                   <span class="preparation-badge {{ item.preparation_status }}" title="{{ 'Cotto' if item.preparation_status == 'cotto' else 'Aperto' }}">
                     <i class="fa-solid {{ 'fa-fire' if item.preparation_status == 'cotto' else 'fa-box-open' }}" aria-hidden="true"></i>
@@ -104,10 +104,8 @@
                 </a>
               </div>
               <div class="item-main">
-                <h3>{{ item.name }}</h3>
-                {% if item.recipe_id %}
-                  <p class="preparation-label recipe">Ricetta lavorata</p>
-                {% elif item.preparation_status and item.preparation_status != 'none' %}
+                <h3>{{ item.name }}{% if item.recipe_id %} <i class="fa-solid fa-mortar-pestle recipe-title-icon" title="Ricetta cucinata" aria-label="Ricetta cucinata"></i>{% endif %}</h3>
+                {% if not item.recipe_id and item.preparation_status and item.preparation_status != 'none' %}
                   <p class="preparation-label {{ item.preparation_status }}">{{ 'Cotto' if item.preparation_status == 'cotto' else 'Aperto' }}</p>
                 {% endif %}
                 <p>
@@ -167,7 +165,7 @@
                      data-created="{{ item.created_at or '' }}">
               <div class="product-media">
                 {% if item.recipe_id %}
-                  <span class="preparation-badge recipe" title="Ricetta lavorata"><i class="fa-solid fa-bowl-food" aria-hidden="true"></i><span class="sr-only">Ricetta lavorata</span></span>
+                  <span class="preparation-badge recipe" title="Ricetta cucinata"><i class="fa-solid fa-fire" aria-hidden="true"></i><span class="sr-only">Ricetta cucinata</span></span>
                 {% elif item.preparation_status and item.preparation_status != 'none' %}
                   <span class="preparation-badge {{ item.preparation_status }}" title="{{ 'Cotto' if item.preparation_status == 'cotto' else 'Aperto' }}">
                     <i class="fa-solid {{ 'fa-fire' if item.preparation_status == 'cotto' else 'fa-box-open' }}" aria-hidden="true"></i>
@@ -184,10 +182,8 @@
               </div>
               <div class="item-main">
                 <div>
-                  <h3>{{ item.name }}</h3>
-                  {% if item.recipe_id %}
-                    <p class="preparation-label recipe">Ricetta lavorata</p>
-                  {% elif item.preparation_status and item.preparation_status != 'none' %}
+                  <h3>{{ item.name }}{% if item.recipe_id %} <i class="fa-solid fa-mortar-pestle recipe-title-icon" title="Ricetta cucinata" aria-label="Ricetta cucinata"></i>{% endif %}</h3>
+                  {% if not item.recipe_id and item.preparation_status and item.preparation_status != 'none' %}
                     <p class="preparation-label {{ item.preparation_status }}">{{ 'Cotto' if item.preparation_status == 'cotto' else 'Aperto' }}</p>
                   {% endif %}
                   <p>

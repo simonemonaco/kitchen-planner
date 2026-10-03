@@ -23,7 +23,7 @@
         Cosa vuoi aggiungere
         <select name="inventory_kind" data-inventory-kind>
           <option value="product" {% if not item.recipe_id %}selected{% endif %}>Prodotto</option>
-          <option value="recipe" {% if item.recipe_id %}selected{% endif %}>Ricetta lavorata</option>
+          <option value="recipe" {% if item.recipe_id %}selected{% endif %}>Ricetta cucinata</option>
         </select>
       </label>
       {% endif %}

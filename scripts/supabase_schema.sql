@@ -27,7 +27,7 @@ create table if not exists public.inventory_items (
     unit text not null default 'pz',
     quantity_pz double precision,
     measure_quantity double precision,
-    location text not null check (location in ('frigo', 'dispensa')),
+    location text not null check (location in ('frigo', 'dispensa', 'freezer')),
     preparation_status text not null default 'none' check (preparation_status in ('none', 'cotto', 'aperto')),
     expiry_date date,
     expiry_estimated integer not null default 0,
