@@ -1,0 +1,24 @@
+<dialog class="prepare-recipe-dialog" data-prepare-dialog>
+  <form class="form-panel" method="post" data-prepare-form>
+    <h3 data-prepare-title>Prepara ricetta</h3>
+    <p class="field-help">Indica quanto vuoi preparare. Il calcolo aggiorna automaticamente gli ingredienti necessari.</p>
+    <div class="prepare-mode-toggle" aria-label="Modalità quantità">
+      <label class="prepare-toggle">
+        <input type="checkbox" role="switch" data-prepare-mode aria-label="Passa a quantità totale">
+        <span class="prepare-toggle-track" aria-hidden="true"><span class="prepare-toggle-thumb"></span></span>
+        <span class="prepare-toggle-text"><span data-mode-label-people>Numero di persone</span><span data-mode-label-quantity>Quantità totale</span></span>
+      </label>
+      <input type="hidden" name="mode" value="people" data-prepare-mode-value>
+    </div>
+    <label data-prepare-people-label>Persone
+      <input name="value" type="number" min="1" step="1" value="{{ recipe.servings if recipe is defined else 2 }}" required data-prepare-value>
+    </label>
+    <p class="field-help" data-prepare-total></p>
+    <div class="prepare-ingredients" data-prepare-ingredients></div>
+    <p class="dialog-error" hidden data-prepare-error></p>
+    <div class="form-actions">
+      <button class="button secondary" type="button" data-prepare-cancel>Annulla</button>
+      <button class="button" type="submit"><i class="fa-solid fa-kitchen-set" aria-hidden="true"></i> Prepara</button>
+    </div>
+  </form>
+</dialog>
