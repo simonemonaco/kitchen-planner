@@ -1,4 +1,18 @@
 -- Allow freezer in default_location to avoid item_prior_default_location_check errors.
+ALTER TABLE public.shopping_items
+    DROP CONSTRAINT IF EXISTS shopping_items_target_location_check;
+
+ALTER TABLE public.shopping_items
+    ADD CONSTRAINT shopping_items_target_location_check
+    CHECK (lower(target_location) IN ('frigo', 'dispensa', 'freezer'));
+
+ALTER TABLE public.items_history
+    DROP CONSTRAINT IF EXISTS items_history_target_location_check;
+
+ALTER TABLE public.items_history
+    ADD CONSTRAINT items_history_target_location_check
+    CHECK (target_location IS NULL OR lower(target_location) IN ('frigo', 'dispensa', 'freezer'));
+
 ALTER TABLE public.inventory_items
     DROP CONSTRAINT IF EXISTS inventory_items_location_check;
 
@@ -182,7 +196,6 @@ INSERT INTO public.item_prior (
  'https://www.themealdb.com/images/ingredients/Apricot.png',
  'TheMealDB',
  'https://www.themealdb.com/ingredient/382-Apricot'),
- 
 ('Vino rosso', 'Altro', 750, 'ml', NULL, 'dispensa',
  'https://commons.wikimedia.org/wiki/Special:FilePath/Pouring%20a%20glass%20of%20red%20wine.tiff',
  'Wikidata / Wikimedia Commons',
@@ -213,4 +226,3 @@ INSERT INTO public.item_prior (
  'Wikimedia Commons',
  'https://commons.wikimedia.org/wiki/File:Raw_beef_slices.jpg');
 
- 

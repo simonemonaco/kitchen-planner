@@ -1270,6 +1270,90 @@ def register_routes(app: Flask) -> None:
             return redirect(url_for("recipes"))
         return render_template("recipe_detail.html", recipe=recipe)
 
+    @app.post("/settings/recipes/<int:recipe_id>/delete")
+    def delete_recipe_route(recipe_id: int):
+        recipe = get_recipe(recipe_id)
+        if not recipe:
+            flash("Ricetta non trovata.", "error")
+            return redirect(url_for("recipes"))
+
+        references = recipe_delete_references(recipe_id)
+        if references:
+            flash(
+                f"Non puoi eliminare {recipe['name']}: è ancora associata a {', '.join(references)}. "
+                "Rimuovi prima queste associazioni.",
+                "error",
+            )
+            return redirect(url_for("recipe_detail", recipe_id=recipe_id))
+
+        try:
+            get_supabase().table("recipes").delete().eq("id", recipe_id).execute()
+        except APIError:
+            flash("La ricetta non può essere eliminata perché è ancora utilizzata.", "error")
+            return redirect(url_for("recipe_detail", recipe_id=recipe_id))
+        flash(f"Ricetta {recipe['name']} eliminata.", "success")
+        return redirect(url_for("recipes"))
+
+    @app.get("/settings/recipes/<int:recipe_id>/prepare-preview")
+    def recipe_prepare_preview(recipe_id: int):
+        recipe = get_recipe(recipe_id)
+        if not recipe:
+            return jsonify({"ok": False, "error": "Ricetta non trovata."}), 404
+        mode = clean_text(request.args.get("mode"), "people").lower()
+        value = parse_optional_quantity(request.args.get("value"))
+        if mode not in {"people", "quantity"} or not value:
+            return jsonify({"ok": False, "error": "Inserisci una quantità valida."}), 400
+        preview = prepare_recipe_preview(recipe, mode, value)
+        if mode == "quantity" and preview["total"] <= 0:
+            return jsonify({"ok": False, "error": "La quantità totale non è calcolabile: servono ingredienti pesati o con equivalente in pezzi."}), 400
+        return jsonify({"ok": True, **preview})
+
+    @app.post("/settings/recipes/<int:recipe_id>/prepare")
+    def prepare_recipe(recipe_id: int):
+        recipe = get_recipe(recipe_id)
+        if not recipe:
+            flash("Ricetta non trovata.", "error")
+            return redirect(url_for("recipes"))
+        mode = clean_text(request.form.get("mode"), "people").lower()
+        value = parse_optional_quantity(request.form.get("value"))
+        if mode not in {"people", "quantity"} or not value:
+            flash("Inserisci una quantità valida per preparare la ricetta.", "error")
+            return redirect(url_for("recipe_detail", recipe_id=recipe_id))
+        if mode == "quantity" and prepare_recipe_preview(recipe, mode, value)["total"] <= 0:
+            flash("La quantità totale non è calcolabile per questa ricetta.", "error")
+            return redirect(url_for("recipe_detail", recipe_id=recipe_id))
+        result = prepare_recipe_from_inventory(recipe, mode, value)
+        if result["shopping_count"]:
+            flash(f"{recipe['name']} preparata. {result['shopping_count']} ingredienti aggiunti alla lista della spesa.", "success")
+        else:
+            flash(f"{recipe['name']} preparata e ingredienti detratti dall'inventario.", "success")
+        return redirect(url_for("recipe_detail", recipe_id=recipe_id))
+
+    @app.post("/inventory/<int:item_id>/prepare-recipe")
+    def prepare_recipe_from_inventory_route(item_id: int):
+        item = get_inventory_item(item_id)
+        if not item or not item.get("recipe_id"):
+            flash("Questa voce non contiene una ricetta preparata.", "error")
+            return redirect_inventory_context()
+        recipe = get_recipe(int(item["recipe_id"]))
+        if not recipe:
+            flash("Ricetta non trovata.", "error")
+            return redirect_inventory_context()
+        mode = clean_text(request.form.get("mode"), "people").lower()
+        value = parse_optional_quantity(request.form.get("value"))
+        if mode not in {"people", "quantity"} or not value:
+            flash("Inserisci una quantità valida per preparare la ricetta.", "error")
+            return redirect_inventory_context()
+        if mode == "quantity" and prepare_recipe_preview(recipe, mode, value)["total"] <= 0:
+            flash("La quantità totale non è calcolabile per questa ricetta.", "error")
+            return redirect_inventory_context()
+        result = prepare_recipe_from_inventory(recipe, mode, value)
+        if result["shopping_count"]:
+            flash(f"Altro {recipe['name']} preparato. {result['shopping_count']} ingredienti aggiunti alla lista della spesa.", "success")
+        else:
+            flash(f"Altro {recipe['name']} preparato e ingredienti detratti dall'inventario.", "success")
+        return redirect_inventory_context()
+
     @app.route("/settings/recipes/<int:recipe_id>/edit", methods=("GET", "POST"))
     def edit_recipe(recipe_id: int):
         recipe = get_recipe(recipe_id)
@@ -2192,7 +2276,7 @@ def list_recipe_options() -> list[dict[str, Any]]:
 def get_recipe_summary(recipe_id: int | None) -> dict[str, Any] | None:
     if not recipe_id:
         return None
-    response = get_supabase().table("recipes").select("id,name,picture").eq("id", recipe_id).limit(1).execute()
+    response = get_supabase().table("recipes").select("id,name,picture,servings").eq("id", recipe_id).limit(1).execute()
     return response.data[0] if response.data else None
 
 
@@ -2461,6 +2545,29 @@ def get_recipe(recipe_id: int) -> dict[str, Any] | None:
     return recipe
 
 
+def recipe_delete_references(recipe_id: int) -> list[str]:
+    """Return user-facing associations that make recipe deletion unsafe."""
+    supabase = get_supabase()
+    checks = (
+        ("inventario", "inventory_items"),
+        ("pasti", "meal_recipes"),
+        ("default settimanali", "meal_default_recipes"),
+        ("consumi registrati", "meal_consumptions"),
+    )
+    references = []
+    for label, table in checks:
+        try:
+            rows = supabase.table(table).select("id").eq("recipe_id", recipe_id).limit(1).execute().data or []
+        except APIError as exc:
+            # Optional tables may not exist in older installations.
+            if exc.code == "PGRST205":
+                continue
+            raise
+        if rows:
+            references.append(label)
+    return references
+
+
 def create_meal(data: dict[str, Any]) -> int:
     supabase = get_supabase()
     response = supabase.table("meals").insert({"name": data["name"], "meal_date": data["meal_date"], "meal_type": data["meal_type"], "people_count": data["people_count"], "updated_at": utc_now()}).execute()
@@ -2666,6 +2773,127 @@ def convert_quantity(quantity: float, from_unit: str | None, to_unit: str | None
     if from_base != to_base:
         return 0.0
     return quantity * from_factor / to_factor
+
+
+def _recipe_preparation_rows(recipe: dict[str, Any], mode: str, value: float) -> list[dict[str, Any]]:
+    """Scale a recipe and normalize comparable ingredients to g or pz."""
+    base_total = 0.0
+    for ingredient in recipe.get("ingredients", []):
+        if ingredient.get("quantity_is_qb"):
+            continue
+        base, factor = unit_factor(ingredient.get("unit"))
+        if base == "g":
+            base_total += float(ingredient.get("quantity") or 0) * factor
+        elif base == "pz":
+            prior = get_item_prior(int(ingredient["item_prior_id"]))
+            measured, measured_unit = piece_measure_quantity(float(ingredient.get("quantity") or 0), prior)
+            if measured and measured_unit:
+                base_total += convert_quantity(measured, measured_unit, "g")
+
+    if mode == "people":
+        scale = value / float(recipe.get("servings") or 1)
+    else:
+        scale = value / base_total if base_total > 0 else 0
+
+    aggregated: dict[tuple[int, str], dict[str, Any]] = {}
+    for ingredient in recipe.get("ingredients", []):
+        if ingredient.get("quantity_is_qb"):
+            continue
+        base, factor = unit_factor(ingredient.get("unit"))
+        prior_id = int(ingredient["item_prior_id"])
+        required = float(ingredient.get("quantity") or 0) * scale * factor
+        key = (prior_id, base)
+        row = aggregated.setdefault(key, {
+            "item_prior_id": prior_id,
+            "name": ingredient.get("name") or "Ingrediente",
+            "required": 0.0,
+            "unit": base,
+            "default_location": ingredient.get("default_location") or "dispensa",
+        })
+        row["required"] += required
+    return sorted(aggregated.values(), key=lambda row: row["name"].casefold())
+
+
+def _recipe_inventory_rows(rows: list[dict[str, Any]]) -> dict[int, list[dict[str, Any]]]:
+    grouped: dict[int, list[dict[str, Any]]] = {}
+    for row in rows:
+        if row.get("item_prior_id") and float(row.get("quantity") or 0) > 0:
+            grouped.setdefault(int(row["item_prior_id"]), []).append(row)
+    return grouped
+
+
+def _consume_inventory_amount(row: dict[str, Any], prior: dict[str, Any], target_unit: str, amount: float) -> float:
+    """Consume amount in target_unit from one inventory row; return consumed amount."""
+    available = inventory_quantity_in_unit(row, prior, target_unit)
+    consumed = min(max(available, 0.0), amount)
+    if consumed <= 0:
+        return 0.0
+    updated = dict(row)
+    quantity_pz = row.get("quantity_pz")
+    measure_quantity = row.get("measure_quantity")
+    if quantity_pz is None and measure_quantity is None:
+        if is_piece_unit(row.get("unit")):
+            quantity_pz = float(row.get("quantity") or 0)
+        else:
+            measure_quantity = float(row.get("quantity") or 0)
+
+    if quantity_pz is not None:
+        if target_unit == "pz":
+            new_pz = float(quantity_pz) - consumed
+        else:
+            consumed_pz = piece_quantity_from_measure(consumed, target_unit, prior) or 0
+            new_pz = float(quantity_pz) - consumed_pz
+        updated["quantity_pz"] = max(new_pz, 0)
+        measured, measured_unit = piece_measure_quantity(updated["quantity_pz"], prior)
+        updated["measure_quantity"] = measured
+        updated["measure_unit"] = measured_unit
+        remaining = updated["quantity_pz"]
+    else:
+        row_unit = row.get("unit") or "g"
+        row_base, row_factor = unit_factor(row_unit)
+        new_measure = float(measure_quantity or 0) - (consumed / row_factor if row_base == target_unit else 0)
+        updated["measure_quantity"] = max(new_measure, 0)
+        updated["measure_unit"] = row_unit
+        remaining = updated["measure_quantity"]
+
+    if remaining <= 0.000001:
+        delete_inventory_item(int(row["id"]))
+    else:
+        update_inventory_item(int(row["id"]), int(row["item_prior_id"]), updated, quantity_delta=-consumed)
+    return consumed
+
+
+def prepare_recipe_preview(recipe: dict[str, Any], mode: str, value: float) -> dict[str, Any]:
+    rows = _recipe_preparation_rows(recipe, mode, value)
+    inventory = get_supabase().table("inventory_items").select("*").execute().data or []
+    grouped = _recipe_inventory_rows(inventory)
+    result = []
+    for row in rows:
+        prior = get_item_prior(row["item_prior_id"]) or {}
+        available = sum(inventory_quantity_in_unit(item, prior, row["unit"]) for item in grouped.get(row["item_prior_id"], []))
+        missing = max(row["required"] - available, 0.0)
+        result.append(row | {"available": available, "missing": missing, "status": "shortage" if missing > 0.000001 else "ok"})
+    total = sum(row["required"] for row in rows if row["unit"] == "g")
+    return {"mode": mode, "value": value, "total": total, "ingredients": result}
+
+
+def prepare_recipe_from_inventory(recipe: dict[str, Any], mode: str, value: float) -> dict[str, Any]:
+    rows = _recipe_preparation_rows(recipe, mode, value)
+    inventory = get_supabase().table("inventory_items").select("*").execute().data or []
+    grouped = _recipe_inventory_rows(inventory)
+    shopping_count = 0
+    for row in rows:
+        prior = get_item_prior(row["item_prior_id"]) or {}
+        needed = row["required"]
+        for item in sorted(grouped.get(row["item_prior_id"], []), key=lambda item: (item.get("expiry_date") is None, item.get("expiry_date") or "9999-12-31", item.get("id", 0))):
+            if needed <= 0:
+                break
+            needed -= _consume_inventory_amount(item, prior, row["unit"], needed)
+        if needed > 0.000001:
+            add_or_increment_shopping_item(row["item_prior_id"], needed, row["unit"], row["default_location"], notes=f"Preparazione: {recipe['name']}")
+            shopping_count += 1
+    get_supabase().table("recipe_history").upsert({"recipe_id": recipe["id"], "cooked_on": date.today().isoformat()}, on_conflict="recipe_id,cooked_on").execute()
+    return {"shopping_count": shopping_count}
 
 
 def get_today_quantity_change(item_id: int, item_unit: str | None) -> float:
@@ -3175,6 +3403,7 @@ def merge_item_with_prior(
     merged = item | {
         "name": recipe.get("name") if recipe else prior.get("name", ""),
         "recipe_name": recipe.get("name") if recipe else "",
+        "recipe_servings": recipe.get("servings") if recipe else None,
         "category": "Piatti pronti" if recipe else prior.get("category", ""),
         "typical_quantity": prior.get("typical_quantity"),
         "typical_unit": prior.get("typical_unit"),
@@ -3365,6 +3594,12 @@ def add_or_increment_shopping_item(
     notes: str | None = None,
 ) -> int:
     supabase = get_supabase()
+    # Shopping items use the same three storage locations as inventory.  Keep
+    # the value canonical because Postgres constraints are case-insensitive,
+    # while the app's lookup and grouping logic is not.
+    target_location = clean_text(target_location, "dispensa").lower()
+    if target_location not in LOCATIONS:
+        raise ValueError("Destinazione della lista spesa non valida.")
     prior = get_item_prior(item_prior_id)
     quantities = resolve_inventory_quantities({"quantity": quantity, "unit": unit}, prior)
     existing_response = (
