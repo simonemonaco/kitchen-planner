@@ -181,6 +181,7 @@
         editingTrigger.textContent = data.qty_display;
         editingTrigger.dataset.itemQuantity = data.quantity;
         editingTrigger.dataset.itemUnit = data.unit;
+        editingTrigger.closest("article")?.classList.toggle("is-zero", Number(data.quantity) <= 0);
         const change = editingTrigger.closest(".item-main")?.querySelector("[data-today-quantity-change]");
         if (change) {
           const amount = Number(data.today_quantity_change || 0);

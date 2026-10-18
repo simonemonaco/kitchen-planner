@@ -10,7 +10,8 @@
     </div>
     <div class="actions">
       <a class="button secondary" href="{{ url_for('receipt_upload') }}"><i class="fa-solid fa-receipt" aria-hidden="true"></i> Aggiungi scontrino</a>
-      <a class="button" href="{{ url_for('add_inventory_item') }}"><i class="fa-solid fa-plus" aria-hidden="true"></i> Aggiungi prodotto</a>
+      <a class="button secondary" href="{{ url_for('modified_inventory') }}"><i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i> Prodotti modificati</a>
+      <a class="button" href="{{ url_for('add_inventory_item') }}"><i class="fa-solid fa-plus" aria-hidden="true"></i> Aggiungi</a>
     </div>
   </section>
 
@@ -282,7 +283,7 @@
     <form method="dialog" class="form-panel compact" data-quantity-edit-form>
       <h3>Modifica quantità</h3>
       <p class="dialog-item-name" data-edit-item-name></p>
-      <label>Quantità <input type="number" name="quantity" min="0.01" step="any" required data-edit-quantity-input></label>
+      <label>Quantità <input type="number" name="quantity" min="0" step="any" required data-edit-quantity-input></label>
       <label data-edit-unit-wrap>Unità di misura
         <select name="unit" required data-edit-unit-input>{% for u in units %}<option value="{{ u }}">{{ u }}</option>{% endfor %}</select>
       </label>

@@ -395,6 +395,13 @@ def register_routes(app: Flask) -> None:
             view_mode=view_mode,
         )
 
+    @app.get("/inventory/modified")
+    def modified_inventory():
+        return render_template(
+            "inventory_modified.html",
+            items=list_modified_inventory_items(),
+        )
+
     @app.route("/inventory/add", methods=("GET", "POST"))
     def add_inventory_item():
         if request.method == "POST":
@@ -643,8 +650,8 @@ def register_routes(app: Flask) -> None:
             # Nell'inventario si modifica solo il numero: l'unità è quella
             # attualmente visibile (pezzi oppure quantità misurata del prior).
             new_unit = item.get("unit") or "pz"
-            if new_quantity <= 0 or new_unit not in UNITS:
-                error = "Inserisci una quantità positiva e un'unità valida."
+            if new_quantity < 0 or new_unit not in UNITS:
+                error = "Inserisci una quantità non negativa e un'unità valida."
                 if is_xhr:
                     return jsonify({"ok": False, "error": error}), 400
                 flash(error, "error")
@@ -676,7 +683,7 @@ def register_routes(app: Flask) -> None:
             direction,
         )
 
-        if new_quantity <= 0:
+        if new_quantity < 0:
             if is_xhr:
                 return jsonify({"ok": False, "error": "La quantita' non puo' scendere sotto zero."}), 400
             flash("La quantita' non puo' scendere sotto zero.", "error")
@@ -710,10 +717,54 @@ def register_routes(app: Flask) -> None:
             return jsonify({
                 "ok": True,
                 "qty_display": f"{_format_qty(new_quantity)} {new_unit}",
+                "quantity": new_quantity,
+                "unit": new_unit,
                 "today_quantity_change": today_change,
                 "today_quantity_change_display": f"{_format_qty(abs(today_change))} {new_unit}",
             })
         return redirect(url_for("index", location=request.args.get("location", ""), view=request.args.get("view", "")))
+
+    @app.post("/inventory/<int:item_id>/undo-quantity-change")
+    def undo_inventory_quantity_change(item_id: int):
+        item = get_inventory_item(item_id)
+        if not item:
+            flash("Prodotto non trovato.", "error")
+            return redirect(url_for("modified_inventory"))
+
+        today = date.today().isoformat()
+        changes = (
+            get_supabase()
+            .table("inventory_quantity_changes")
+            .select("id,quantity,unit")
+            .eq("inventory_item_id", item_id)
+            .eq("changed_on", today)
+            .execute()
+            .data
+            or []
+        )
+        current_unit = item.get("unit") or "pz"
+        changed_quantity = sum(
+            convert_quantity(float(change["quantity"]), change.get("unit"), current_unit)
+            for change in changes
+        )
+        if not changes or abs(changed_quantity) < 0.000001:
+            flash("Non ci sono modifiche di quantità da annullare.", "error")
+            return redirect(url_for("modified_inventory"))
+
+        new_quantity = max(float(item.get("quantity") or 0) - changed_quantity, 0.0)
+        prior = get_item_prior(int(item["item_prior_id"])) if item.get("item_prior_id") else None
+        payload = item | {"quantity": new_quantity, "unit": current_unit}
+        if is_piece_unit(current_unit):
+            payload["quantity_pz"] = new_quantity
+            payload["measure_quantity"], payload["measure_unit"] = piece_measure_quantity(new_quantity, prior)
+        else:
+            payload["measure_quantity"] = new_quantity
+            payload["measure_unit"] = item.get("measure_unit") or current_unit
+            payload["quantity_pz"] = piece_quantity_from_measure(new_quantity, payload["measure_unit"], prior)
+        update_inventory_item(item_id, item.get("item_prior_id"), payload)
+        get_supabase().table("inventory_quantity_changes").delete().eq("inventory_item_id", item_id).eq("changed_on", today).execute()
+        flash(f"Modifica di quantità annullata per {item['name']}.", "success")
+        return redirect(url_for("modified_inventory"))
 
     @app.get("/inventory/receipt")
     def receipt_upload():
@@ -3483,6 +3534,49 @@ def list_inventory_items(location: str | None = None) -> list[dict[str, Any]]:
             (row.get("name") or "").casefold(),
         ),
     )
+
+
+def list_modified_inventory_items() -> list[dict[str, Any]]:
+    """Return inventory rows whose quantity changed today, with net delta."""
+    today = date.today().isoformat()
+    changes = (
+        get_supabase()
+        .table("inventory_quantity_changes")
+        .select("inventory_item_id,quantity,unit,changed_at")
+        .eq("changed_on", today)
+        .order("changed_at", desc=True)
+        .execute()
+        .data
+        or []
+    )
+    if not changes:
+        return []
+
+    item_ids = sorted({int(change["inventory_item_id"]) for change in changes})
+    raw_items = get_supabase().table("inventory_items").select("*").in_("id", item_ids).execute().data or []
+    raw_by_id = {int(item["id"]): item for item in raw_items}
+    prior_map = load_item_prior_map([int(item["item_prior_id"]) for item in raw_items if item.get("item_prior_id")])
+    delta_map: dict[int, float] = {}
+    for change in changes:
+        item_id = int(change["inventory_item_id"])
+        raw_item = raw_by_id.get(item_id)
+        if not raw_item:
+            continue
+        delta_map[item_id] = delta_map.get(item_id, 0.0) + convert_quantity(
+            float(change["quantity"]), change.get("unit"), raw_item.get("unit") or "pz"
+        )
+
+    result = []
+    for raw_item in raw_items:
+        item_id = int(raw_item["id"])
+        delta = delta_map.get(item_id, 0.0)
+        if abs(delta) < 0.000001:
+            continue
+        result.append(
+            merge_item_with_prior(raw_item, prior_map.get(int(raw_item["item_prior_id"])) if raw_item.get("item_prior_id") else None)
+            | {"today_quantity_change": delta}
+        )
+    return sorted(result, key=lambda row: (row.get("name") or "").casefold())
 
 
 def get_inventory_item(item_id: int) -> dict[str, Any] | None:

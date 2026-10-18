@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+
+{% block title %}Prodotti modificati - Kitchen Planner{% endblock %}
+
+{% block content %}
+  <section class="toolbar">
+    <div>
+      <p class="eyebrow">Inventario · oggi</p>
+      <h2>Prodotti modificati</h2>
+    </div>
+    <div class="actions">
+      <a class="button secondary" href="{{ url_for('index') }}"><i class="fa-solid fa-boxes-stacked" aria-hidden="true"></i> Torna all'inventario</a>
+    </div>
+  </section>
+
+  <section class="list-panel modified-inventory-panel">
+    {% if items %}
+      <div class="pantry-grid modified-inventory-grid">
+        {% for item in items %}
+          <article class="pantry-card modified-inventory-card{% if item.quantity <= 0 %} is-zero{% endif %}">
+            <button class="modified-undo-button" type="button" data-open-undo data-item-id="{{ item.id }}" data-item-name="{{ item.name }}" aria-label="Annulla modifica di {{ item.name }}" title="Annulla modifica">
+              <i class="fa-solid fa-rotate-left" aria-hidden="true"></i>
+            </button>
+            <div class="product-media">
+              {% if item.recipe_id %}
+                <span class="preparation-badge recipe"><i class="fa-solid fa-fire" aria-hidden="true"></i><span class="sr-only">Ricetta cucinata</span></span>
+              {% endif %}
+              {% if item.picture %}
+                <img src="{{ item.picture }}" alt="{{ item.name }}">
+              {% else %}
+                <span>{{ item.name[:1] }}</span>
+              {% endif %}
+            </div>
+            <div class="item-main">
+              <h3>{{ item.name }}</h3>
+              <p>{{ locations[item.location] }}{% if item.category %}<span class="dot">.</span>{{ item.category }}{% endif %}</p>
+              <div class="modified-quantity-line">
+                <span class="quantity-pill">{{ item.quantity|qty }} {{ item.unit }}</span>
+                <span class="today-quantity-change {% if item.today_quantity_change > 0 %}is-added{% else %}is-used{% endif %}">
+                  <span aria-hidden="true">{% if item.today_quantity_change > 0 %}▲{% else %}▼{% endif %}</span>
+                  {{ item.today_quantity_change|abs|qty }} {{ item.unit }}
+                </span>
+              </div>
+              {% if item.quantity <= 0 %}<p class="modified-zero-note">Quantità esaurita</p>{% endif %}
+            </div>
+          </article>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="empty-state modified-empty-state">
+        <i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i>
+        <h3>Nessuna modifica oggi</h3>
+        <p>Qui compariranno i prodotti quando aumenterai o ridurrai la loro quantità nell'inventario.</p>
+      </div>
+    {% endif %}
+  </section>
+
+  <dialog class="quantity-edit-dialog modified-undo-dialog" data-undo-dialog>
+    <form method="post" class="form-panel compact" data-undo-form>
+      <h3>Annullare la modifica?</h3>
+      <p class="dialog-item-name" data-undo-item-name></p>
+      <p>La quantità modificata oggi verrà ripristinata. Vuoi continuare?</p>
+      <div class="dialog-actions">
+        <button class="small-button secondary" type="button" data-undo-cancel>Annulla</button>
+        <button class="button" type="submit"><i class="fa-solid fa-rotate-left" aria-hidden="true"></i> Ripristina</button>
+      </div>
+    </form>
+  </dialog>
+{% endblock %}
+
+{% block page_scripts %}
+<script>
+(() => {
+  const dialog = document.querySelector('[data-undo-dialog]');
+  const form = dialog?.querySelector('[data-undo-form]');
+  if (!dialog || !form) return;
+  document.querySelectorAll('[data-open-undo]').forEach((button) => {
+    button.addEventListener('click', () => {
+      form.action = `/inventory/${button.dataset.itemId}/undo-quantity-change`;
+      form.querySelector('[data-undo-item-name]').textContent = button.dataset.itemName;
+      dialog.showModal();
+    });
+  });
+  form.querySelector('[data-undo-cancel]').addEventListener('click', () => dialog.close());
+  dialog.addEventListener('click', (event) => {
+    if (event.target === dialog) dialog.close();
+  });
+})();
+</script>
+{% endblock %}

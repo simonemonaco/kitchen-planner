@@ -458,6 +458,71 @@ button {
   align-content: start;
 }
 
+.modified-inventory-card {
+  position: relative;
+}
+
+.modified-inventory-card.is-zero {
+  opacity: .52;
+}
+
+.modified-undo-button {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--brand-dark);
+  cursor: pointer;
+}
+
+.modified-undo-button:hover,
+.modified-undo-button:focus-visible {
+  border-color: var(--brand);
+  background: var(--surface-strong);
+}
+
+.modified-quantity-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.modified-quantity-line .quantity-pill {
+  min-width: 0;
+  padding: 5px 10px;
+}
+
+.modified-quantity-line .today-quantity-change {
+  margin-top: 0;
+}
+
+.modified-zero-note {
+  margin-top: 9px !important;
+  color: var(--muted);
+  font-size: .82rem;
+  font-weight: 700;
+}
+
+.modified-empty-state {
+  padding: 36px 20px;
+  text-align: center;
+}
+
+.modified-empty-state > i {
+  margin-bottom: 12px;
+  color: var(--brand);
+  font-size: 1.8rem;
+}
+
 .pantry-card .product-media {
   margin: 0 auto;
 }
@@ -646,6 +711,7 @@ button {
 .dialog-item-name { margin: -2px 0 12px; color: var(--muted); font-weight: 700; }
 .dialog-error { color: var(--danger); font-weight: 700; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.modified-undo-dialog { max-width: min(92vw, 420px); }
 
 .dot {
   color: #a6b0aa;

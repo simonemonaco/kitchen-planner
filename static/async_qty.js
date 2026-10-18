@@ -31,6 +31,8 @@
             if (data.quantity != null) pill.dataset.itemQuantity = data.quantity;
             if (data.unit) pill.dataset.itemUnit = data.unit;
           }
+          const card = wrapper.closest("article");
+          if (card) card.classList.toggle("is-zero", Number(data.quantity) <= 0);
           const change = wrapper.closest(".item-main")?.querySelector("[data-today-quantity-change]");
           if (change) {
             const amount = Number(data.today_quantity_change || 0);
