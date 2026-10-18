@@ -198,6 +198,10 @@
       const resolvedUnit = fieldName === "unit" && !usePieceSuggestion ? "typicalUnit" : resolvedKey;
       setField(form, fieldName, option.dataset[resolvedUnit] || "");
     });
+    if (window.normalizeSearchText(option.dataset.category) === "casalinghi") {
+      setField(form, "quantity", "1");
+      setField(form, "unit", "pz");
+    }
 
     const expiryField = form.querySelector("[data-prior-expiry]");
     const expiryEstimatedField = form.querySelector("[data-prior-expiry-estimated]");

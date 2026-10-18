@@ -43,6 +43,9 @@ UNITS = ["pz", "g", "ml", "l", "kg"]
 CATEGORIES = [
     "Verdura",
     "Frutta",
+    "Frutta secca e semi",
+    "Prodotti da forno",
+    "Proteine vegetali",
     "Latticini",
     "Formaggi",
     "Carne",
@@ -50,13 +53,16 @@ CATEGORIES = [
     "Uova",
     "Cereali",
     "Legumi",
+    "Condimenti",
     "Pasta",
     "Dolci",
     "Spezie",
     "Bibite",
     "Alcolici",
     "Altro",
+    "Casalinghi",
 ]
+HOUSEHOLD_CATEGORY = "Casalinghi"
 
 OPEN_FOOD_FACTS_SEARCH_URL = "https://world.openfoodfacts.org/api/v2/search"
 WIKIDATA_SEARCH_URL = "https://www.wikidata.org/w/api.php"
@@ -70,72 +76,7 @@ def normalize_search_text(value: str | None) -> str:
 
 load_dotenv()
 
-DEFAULT_PRIOR_ITEMS = [
-    {
-        "name": "Mozzarella",
-        "category": "Formaggi",
-        "default_location": "frigo",
-        "typical_quantity": 125,
-        "typical_unit": "g",
-        "typical_shelf_life_days": 10,
-    },
-    {
-        "name": "Pasta",
-        "category": "Pasta",
-        "default_location": "dispensa",
-        "typical_quantity": 500,
-        "typical_unit": "g",
-        "typical_shelf_life_days": 365,
-    },
-    {
-        "name": "Riso",
-        "category": "Cereali",
-        "default_location": "dispensa",
-        "typical_quantity": 1,
-        "typical_unit": "kg",
-        "typical_shelf_life_days": 365,
-    },
-    {
-        "name": "Farro",
-        "category": "Cereali",
-        "default_location": "dispensa",
-        "typical_quantity": 500,
-        "typical_unit": "g",
-        "typical_shelf_life_days": 365,
-    },
-    {
-        "name": "Melanzane",
-        "category": "Verdura",
-        "default_location": "frigo",
-        "typical_quantity": 1,
-        "typical_unit": "pz",
-        "typical_shelf_life_days": 5,
-    },
-    {
-        "name": "Mele",
-        "category": "Frutta",
-        "default_location": "frigo",
-        "typical_quantity": 1,
-        "typical_unit": "kg",
-        "typical_shelf_life_days": 30,
-    },
-    {
-        "name": "Pere",
-        "category": "Frutta",
-        "default_location": "frigo",
-        "typical_quantity": 1,
-        "typical_unit": "kg",
-        "typical_shelf_life_days": 7,
-    },
-    {
-        "name": "Fragole",
-        "category": "Frutta",
-        "default_location": "frigo",
-        "typical_quantity": 250,
-        "typical_unit": "g",
-        "typical_shelf_life_days": 3,
-    },
-]
+DEFAULT_PRIOR_ITEMS = []
 
 REQUIRED_TABLES = [
     "item_prior",
@@ -421,7 +362,7 @@ def register_routes(app: Flask) -> None:
                     "inventory_form.html",
                     item=data,
                     mode="add",
-                    prior_options=list_item_prior_options(),
+                    prior_options=list_inventory_prior_options(),
                     recipe_options=list_recipe_options(),
                 ), 400
 
@@ -434,6 +375,15 @@ def register_routes(app: Flask) -> None:
                     existing_prior_id=data.get("item_prior_id"),
                     update_existing=False,
                 )
+                if is_household_prior(get_item_prior(prior_id)):
+                    flash("Questo prodotto appartiene ai Casalinghi: aggiungilo alla lista della spesa.", "error")
+                    return render_template(
+                        "inventory_form.html",
+                        item=data,
+                        mode="add",
+                        prior_options=list_inventory_prior_options(),
+                        recipe_options=list_recipe_options(),
+                    ), 400
                 create_inventory_item(prior_id, data)
                 flash("Prodotto aggiunto all'inventario.", "success")
             return redirect(url_for("index"))
@@ -442,7 +392,7 @@ def register_routes(app: Flask) -> None:
             "inventory_form.html",
             item=empty_inventory_form(),
             mode="add",
-            prior_options=list_item_prior_options(),
+            prior_options=list_inventory_prior_options(),
             recipe_options=list_recipe_options(),
         )
 
@@ -463,7 +413,7 @@ def register_routes(app: Flask) -> None:
                     "inventory_form.html",
                     item=data | {"id": item_id, "item_prior_id": item.get("item_prior_id"), "recipe_id": item.get("recipe_id")},
                     mode="edit",
-                    prior_options=list_item_prior_options(),
+                    prior_options=list_inventory_prior_options(),
                     recipe_options=list_recipe_options(),
                 ), 400
 
@@ -475,6 +425,15 @@ def register_routes(app: Flask) -> None:
                     existing_prior_id=data.get("item_prior_id") or item.get("item_prior_id"),
                     update_existing=False,
                 )
+                if is_household_prior(get_item_prior(prior_id)):
+                    flash("Questo prodotto appartiene ai Casalinghi: non può essere inserito nell'inventario.", "error")
+                    return render_template(
+                        "inventory_form.html",
+                        item=data | {"id": item_id, "item_prior_id": data.get("item_prior_id") or item.get("item_prior_id")},
+                        mode="edit",
+                        prior_options=list_inventory_prior_options(),
+                        recipe_options=list_recipe_options(),
+                    ), 400
                 update_inventory_item(item_id, prior_id, data)
             flash("Prodotto aggiornato.", "success")
             return redirect(url_for("index"))
@@ -492,7 +451,7 @@ def register_routes(app: Flask) -> None:
             "inventory_form.html",
             item=dict(item),
             mode="edit",
-            prior_options=list_item_prior_options(),
+            prior_options=list_inventory_prior_options(),
             recipe_options=list_recipe_options(),
             purchased_at=purchased_at,
         )
@@ -799,7 +758,7 @@ def register_routes(app: Flask) -> None:
             "receipt_match.html",
             matched=matched,
             unmatched=unmatched,
-            prior_options=list_item_prior_options(),
+            prior_options=list_inventory_prior_options(),
         )
 
     @app.post("/inventory/receipt/matched")
@@ -852,7 +811,7 @@ def register_routes(app: Flask) -> None:
         return render_template(
             "receipt_unmatched.html",
             rows=unresolved,
-            prior_options=list_item_prior_options(),
+            prior_options=list_inventory_prior_options(),
         )
 
     @app.post("/inventory/receipt/unmatched")
@@ -1015,6 +974,8 @@ def register_routes(app: Flask) -> None:
             except (TypeError, ValueError):
                 new_quantity = 0
             new_unit = clean_text(request.form.get("unit"), item.get("unit") or "pz")
+            if is_household_prior(item):
+                new_quantity, new_unit = 1, "pz"
             if new_quantity <= 0 or new_unit not in UNITS:
                 error = "Inserisci una quantità positiva e un'unità valida."
                 if is_xhr:
@@ -1037,6 +998,8 @@ def register_routes(app: Flask) -> None:
             item.get("unit"),
             direction,
         )
+        if is_household_prior(item):
+            new_quantity, new_unit = 1, "pz"
 
         if new_quantity <= 0:
             if is_xhr:
@@ -1735,9 +1698,13 @@ def get_selected_prior(prior_id: str | int | None, name: str | None) -> dict[str
     if not parsed_id or not cleaned_name:
         return None
     prior = get_item_prior(parsed_id)
-    if prior and prior["name"].casefold() == cleaned_name.casefold():
+    if prior and normalize_search_text(prior.get("name")) == normalize_search_text(cleaned_name):
         return prior
     return None
+
+
+def is_household_prior(prior: dict[str, Any] | None) -> bool:
+    return normalize_category((prior or {}).get("category")) == HOUSEHOLD_CATEGORY
 
 
 def resolve_expiry(
@@ -1790,7 +1757,7 @@ def inventory_form_data(form: Any) -> dict[str, Any]:
         "recipe_requested": recipe_requested,
         "name": recipe["name"] if recipe else clean_text(form.get("name")),
         "recipe_name": recipe["name"] if recipe else "",
-        "category": "Piatti pronti" if recipe else "Altro",
+        "category": "Piatti pronti" if recipe else (selected_prior.get("category") if selected_prior else "Altro"),
         "typical_quantity": quantity,
         "typical_unit": unit,
         "typical_shelf_life_days": typical_shelf_life_days,
@@ -1810,13 +1777,15 @@ def inventory_form_data(form: Any) -> dict[str, Any]:
 
 
 def shopping_form_data(form: Any) -> dict[str, Any]:
-    quantity = parse_quantity(form.get("quantity"))
-    unit = clean_text(form.get("unit"), "pz")
+    selected_prior = get_selected_prior(form.get("item_prior_id"), form.get("name"))
+    household = is_household_prior(selected_prior)
+    quantity = 1 if household else parse_quantity(form.get("quantity"))
+    unit = "pz" if household else clean_text(form.get("unit"), "pz")
     target_location = form.get("target_location", "dispensa")
     return {
         "item_prior_id": parse_optional_int(form.get("item_prior_id")),
         "name": clean_text(form.get("name")),
-        "category": "Altro",
+        "category": selected_prior.get("category") if selected_prior else "Altro",
         "typical_quantity": quantity,
         "typical_unit": unit,
         "typical_shelf_life_days": None,
@@ -2023,7 +1992,7 @@ def adjust_quantity_with_unit(
 
 def prior_form_data(form: Any) -> dict[str, Any]:
     picture = clean_text(form.get("picture"))
-    return {
+    data = {
         "name": clean_text(form.get("name")),
         "category": normalize_category(form.get("category")),
         "typical_quantity": parse_optional_quantity(form.get("typical_quantity")),
@@ -2038,12 +2007,17 @@ def prior_form_data(form: Any) -> dict[str, Any]:
         "picture": picture,
         "notes": clean_text(form.get("notes")),
     }
+    if data["category"] == HOUSEHOLD_CATEGORY:
+        data.update(typical_quantity=1, typical_unit="pz", typical_quantity_pz=1, typical_shelf_life_days=None, minimum_unit="pz")
+    return data
 
 
 def validate_inventory_data(data: dict[str, Any]) -> list[str]:
     if data.get("recipe_requested") and not data.get("recipe_id"):
         return ["Seleziona una ricetta dall'elenco dei suggerimenti."]
     errors = [] if data.get("recipe_id") else validate_prior_data(data)
+    if not data.get("recipe_id") and data.get("category") == HOUSEHOLD_CATEGORY:
+        errors.append("I prodotti della categoria Casalinghi vanno aggiunti solo alla lista della spesa.")
     if data["quantity"] <= 0:
         errors.append("La quantita' deve essere maggiore di zero.")
     if data["location"] not in LOCATIONS:
@@ -2146,6 +2120,8 @@ def ensure_item_prior(
 
         "notes": data.get("prior_notes") or data.get("notes") or "",
     }
+    if prior_data["category"] == HOUSEHOLD_CATEGORY:
+        prior_data.update(typical_quantity=1, typical_unit="pz", typical_quantity_pz=1, typical_shelf_life_days=None, minimum_unit="pz")
 
     if not prior_data["picture"] and fetch_picture:
         food_profile = fetch_public_food_profile(name, prior_data.get("category"))
@@ -2212,7 +2188,7 @@ def bounded_edit_distance(left: str, right: str, limit: int) -> int | None:
 
 
 def merge_prior_data(current: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
-    return {
+    merged = {
         "name": incoming.get("name") or current.get("name"),
         "category": incoming.get("category") or current.get("category"),
         "typical_quantity": incoming.get("typical_quantity") or current.get("typical_quantity"),
@@ -2228,6 +2204,9 @@ def merge_prior_data(current: dict[str, Any], incoming: dict[str, Any]) -> dict[
         
         "notes": incoming.get("prior_notes") or current.get("notes"),
     }
+    if normalize_category(merged.get("category")) == HOUSEHOLD_CATEGORY:
+        merged.update(typical_quantity=1, typical_unit="pz", typical_quantity_pz=1, typical_shelf_life_days=None, minimum_unit="pz")
+    return merged
 
 
 def merge_external_prior_data(
@@ -2275,6 +2254,8 @@ def update_item_prior(prior_id: int, data: dict[str, Any]) -> None:
         "notes": value("notes"),
         "updated_at": utc_now(),
     }
+    if normalize_category(payload.get("category")) == HOUSEHOLD_CATEGORY:
+        payload.update(typical_quantity=1, typical_unit="pz", typical_quantity_pz=1, typical_shelf_life_days=None, minimum_unit="pz")
     get_supabase().table("item_prior").update(payload).eq("id", prior_id).execute()
 
 
@@ -2370,6 +2351,11 @@ def list_item_prior_options() -> list[dict[str, Any]]:
         prior["suggested_quantity"] = latest.get("quantity") if latest else (prior.get("typical_quantity_pz") or 1)
         prior["suggested_unit"] = latest.get("unit") if latest else "pz"
     return sorted(priors, key=lambda row: (row.get("name") or "").casefold())
+
+
+def list_inventory_prior_options() -> list[dict[str, Any]]:
+    """Return priors that can actually be stored in a kitchen location."""
+    return [prior for prior in list_item_prior_options() if not is_household_prior(prior)]
 
 
 def list_recipe_options() -> list[dict[str, Any]]:
@@ -3276,7 +3262,7 @@ def enrich_prior_with_llm(name: str) -> tuple[dict[str, Any], str | None]:
 
     prompt = (
         "Sei un assistente per una app di gestione cucina italiana.\n"
-        "Dato il nome di un prodotto alimentare, rispondi SOLO con un oggetto JSON valido "
+        "Dato il nome di un prodotto alimentare o casalingo, rispondi SOLO con un oggetto JSON valido "
         "(senza markdown, senza testo aggiuntivo) con questi campi:\n"
         f'- "category": una tra [{categories_str}], oppure null se incerto\n'
         f'- "typical_quantity": numero positivo (quantità tipica di acquisto), oppure null se incerto\n'
@@ -3648,6 +3634,8 @@ def create_inventory_item(
     merge_similar: bool = False,
 ) -> int:
     prior = get_item_prior(item_prior_id) if item_prior_id else None
+    if is_household_prior(prior):
+        raise ValueError("I prodotti Casalinghi non possono essere inseriti nell'inventario.")
     if merge_similar:
         existing = find_similar_inventory_item(item_prior_id, data.get("expiry_date"))
         if existing:
@@ -3748,6 +3736,8 @@ def add_or_increment_shopping_item(
     if target_location not in LOCATIONS:
         raise ValueError("Destinazione della lista spesa non valida.")
     prior = get_item_prior(item_prior_id)
+    if is_household_prior(prior):
+        quantity, unit = 1, "pz"
     quantities = resolve_inventory_quantities({"quantity": quantity, "unit": unit}, prior)
     existing_response = (
         supabase.table("shopping_items")
@@ -3856,6 +3846,24 @@ def complete_shopping_purchase(
     if target_location not in LOCATIONS:
         return "Destinazione non valida."
 
+    if is_household_prior(item):
+        # Household goods are purchased and tracked in history, but never
+        # become kitchen inventory. Their canonical quantity is always 1 pz.
+        create_history_item(
+            {
+                "item_prior_id": item["item_prior_id"],
+                "inventory_item_id": None,
+                "purchased_at": purchased_at,
+                "quantity": 1,
+                "unit": "pz",
+                "cost": cost,
+                "target_location": None,
+                "notes": item["notes"] or "",
+            }
+        )
+        delete_shopping_item(int(item["id"]))
+        return None
+
     if typical_shelf_life_days != item["typical_shelf_life_days"]:
         update_item_prior(
             item["item_prior_id"],
@@ -3923,6 +3931,21 @@ def add_receipt_item_to_kitchen(
     prior = get_item_prior(prior_id)
     if not prior:
         raise ValueError("Prior non trovato.")
+
+    if is_household_prior(prior):
+        create_history_item(
+            {
+                "item_prior_id": prior_id,
+                "inventory_item_id": None,
+                "purchased_at": purchased_at or utc_now(),
+                "quantity": 1,
+                "unit": "pz",
+                "cost": cost,
+                "target_location": None,
+                "notes": f"Scontrino: {description}",
+            }
+        )
+        return 0
 
     expiry_date, expiry_estimated = resolve_expiry(
         None,
