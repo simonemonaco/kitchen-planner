@@ -39,7 +39,7 @@
     function updateEmpty() { empty.hidden = selected.children.length > 0; }
     add.addEventListener('click', () => {
       const value = search.value.trim();
-      const option = Array.from(slot.querySelectorAll('datalist option')).find(item => item.value.toLocaleLowerCase() === value.toLocaleLowerCase());
+      const option = Array.from(slot.querySelectorAll('datalist option')).find(item => window.normalizeSearchText(item.value) === window.normalizeSearchText(value));
       if (!option || selected.querySelector(`[data-recipe-id="${option.dataset.recipeId}"]`)) return;
       const id = option.dataset.recipeId;
       const row = document.createElement('div'); row.className = 'weekly-selected-recipe'; row.dataset.selectedRecipe = ''; row.dataset.recipeId = id;

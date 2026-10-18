@@ -112,10 +112,10 @@
   // ── Search / Filter ────────────────────────────────────────────────────────
 
   function applyFilter(query) {
-    const needle = query.trim().toLowerCase();
+    const needle = window.normalizeSearchText(query.trim());
     getItems().forEach((item) => {
-      const name = (item.dataset.name || "").toLowerCase();
-      const cat = (item.dataset.category || "").toLowerCase();
+      const name = window.normalizeSearchText(item.dataset.name);
+      const cat = window.normalizeSearchText(item.dataset.category);
       item.hidden = needle !== "" && !name.includes(needle) && !cat.includes(needle);
     });
   }

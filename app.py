@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import unicodedata
 from calendar import monthrange
 from html import escape as html_escape
 from difflib import SequenceMatcher
@@ -59,6 +60,12 @@ CATEGORIES = [
 
 OPEN_FOOD_FACTS_SEARCH_URL = "https://world.openfoodfacts.org/api/v2/search"
 WIKIDATA_SEARCH_URL = "https://www.wikidata.org/w/api.php"
+
+
+def normalize_search_text(value: str | None) -> str:
+    """Normalize text used by search filters, including accent folding."""
+    text = unicodedata.normalize("NFKD", value or "")
+    return "".join(character for character in text if not unicodedata.combining(character)).casefold()
 
 
 load_dotenv()
@@ -1977,7 +1984,7 @@ def match_receipt_row_to_prior(
 
 
 def normalize_match_text(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", value.casefold()).strip()
+    return re.sub(r"[^a-z0-9]+", " ", normalize_search_text(value)).strip()
 
 
 def receipt_rows_by_id() -> dict[str, dict[str, Any]]:
@@ -2101,11 +2108,17 @@ def ensure_item_prior(
     prior = None
     if existing_prior_id:
         selected_prior = get_item_prior(existing_prior_id)
-        if selected_prior and selected_prior["name"].casefold() == name.casefold():
+        if selected_prior and normalize_search_text(selected_prior.get("name")) == normalize_search_text(name):
             prior = selected_prior
     if not prior:
-        response = supabase.table("item_prior").select("*").ilike("name", name).limit(1).execute()
-        prior = response.data[0] if response.data else None
+        priors = supabase.table("item_prior").select("*").execute().data or []
+        normalized_name = normalize_search_text(name)
+        prior = next(
+            (candidate for candidate in priors if normalize_search_text(candidate.get("name")) == normalized_name),
+            None,
+        )
+        if not prior:
+            prior = find_similar_prior(name, priors)
 
     if prior:
         if not update_existing:
@@ -2156,6 +2169,46 @@ def ensure_item_prior(
     if not response.data:
         raise RuntimeError("Inserimento prior non riuscito.")
     return int(response.data[0]["id"])
+
+
+def find_similar_prior(name: str, priors: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Find a likely spelling/inflection variant without merging unrelated names."""
+    target_tokens = normalize_match_text(name).split()
+    if not target_tokens:
+        return None
+
+    candidates: list[tuple[int, int, dict[str, Any]]] = []
+    for prior in priors:
+        prior_tokens = normalize_match_text(prior.get("name") or "").split()
+        if len(prior_tokens) != len(target_tokens):
+            continue
+        distances = [bounded_edit_distance(left, right, 2) for left, right in zip(target_tokens, prior_tokens)]
+        if any(distance is None for distance in distances):
+            continue
+        total_distance = sum(distance for distance in distances if distance is not None)
+        if 0 < total_distance <= 2:
+            candidates.append((total_distance, int(prior["id"]), prior))
+
+    return min(candidates, key=lambda candidate: (candidate[0], candidate[1]))[2] if candidates else None
+
+
+def bounded_edit_distance(left: str, right: str, limit: int) -> int | None:
+    """Return Levenshtein distance, stopping when it exceeds the given limit."""
+    if abs(len(left) - len(right)) > limit:
+        return None
+    previous = list(range(len(right) + 1))
+    for left_index, left_character in enumerate(left, start=1):
+        current = [left_index]
+        for right_index, right_character in enumerate(right, start=1):
+            current.append(
+                min(
+                    current[-1] + 1,
+                    previous[right_index] + 1,
+                    previous[right_index - 1] + (left_character != right_character),
+                )
+            )
+        previous = current
+    return previous[-1] if previous[-1] <= limit else None
 
 
 def merge_prior_data(current: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
@@ -2254,12 +2307,12 @@ def list_item_priors(query: str = "") -> list[dict[str, Any]]:
     priors = priors_response.data or []
 
     if query:
-        needle = query.casefold()
+        needle = normalize_search_text(query)
         priors = [
             row
             for row in priors
-            if needle in (row.get("name") or "").casefold()
-            or needle in (row.get("category") or "").casefold()
+            if needle in normalize_search_text(row.get("name"))
+            or needle in normalize_search_text(row.get("category"))
         ]
 
     inventory_rows = supabase.table("inventory_items").select("item_prior_id").execute().data or []
@@ -2573,8 +2626,8 @@ def update_recipe(recipe_id: int, data: dict[str, Any], ingredients: list[dict[s
 def list_recipes(query: str = "") -> list[dict[str, Any]]:
     rows = get_supabase().table("recipes").select("*").execute().data or []
     if query:
-        needle = query.casefold()
-        rows = [row for row in rows if needle in (row.get("name") or "").casefold()]
+        needle = normalize_search_text(query)
+        rows = [row for row in rows if needle in normalize_search_text(row.get("name"))]
     history = get_supabase().table("recipe_history").select("recipe_id,cooked_on").order("cooked_on", desc=True).execute().data or []
     history_map: dict[int, list[str]] = {}
     for row in history:

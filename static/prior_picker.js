@@ -37,13 +37,13 @@
     }
 
     function render() {
-      const query = input.value.trim().toLocaleLowerCase();
+      const query = window.normalizeSearchText(input.value.trim());
       if (query.length < 3) {
         menu.replaceChildren();
         close();
         return;
       }
-      const matches = options.filter((option) => option.value.toLocaleLowerCase().includes(query)).slice(0, 8);
+      const matches = options.filter((option) => window.normalizeSearchText(option.value).includes(query)).slice(0, 8);
       menu.replaceChildren();
       activeIndex = -1;
       if (!matches.length || document.activeElement !== input) {
@@ -154,9 +154,9 @@
       return null;
     }
 
-    const value = input.value.trim().toLocaleLowerCase();
+    const value = window.normalizeSearchText(input.value.trim());
     return Array.from(list.options).find(
-      (option) => option.value.trim().toLocaleLowerCase() === value
+      (option) => window.normalizeSearchText(option.value.trim()) === value
     );
   }
 

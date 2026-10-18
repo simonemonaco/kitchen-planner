@@ -174,8 +174,8 @@
   if (recipeInput && recipeId) {
     const list = document.getElementById(recipeInput.dataset.autocompleteSource || recipeInput.getAttribute('list'));
     const sync = () => {
-      const value = recipeInput.value.trim().toLocaleLowerCase();
-      const option = Array.from(list?.options || []).find(item => item.value.trim().toLocaleLowerCase() === value);
+      const value = window.normalizeSearchText(recipeInput.value.trim());
+      const option = Array.from(list?.options || []).find(item => window.normalizeSearchText(item.value.trim()) === value);
       recipeId.value = option?.dataset.recipeId || '';
     };
     recipeInput.addEventListener('input', sync);

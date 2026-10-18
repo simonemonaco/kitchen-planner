@@ -116,10 +116,10 @@
   function rows() { return Array.from(list.querySelectorAll('.prior-row')); }
 
   function applyFilter(q) {
-    const needle = q.trim().toLowerCase();
+    const needle = window.normalizeSearchText(q.trim());
     rows().forEach(row => {
-      const name = (row.dataset.name || '');
-      const cat  = (row.dataset.category || '');
+      const name = window.normalizeSearchText(row.dataset.name);
+      const cat  = window.normalizeSearchText(row.dataset.category);
       row.hidden = needle !== '' && !name.includes(needle) && !cat.includes(needle);
     });
 

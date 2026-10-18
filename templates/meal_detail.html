@@ -100,12 +100,12 @@
   const noResults = picker.querySelector('[data-meal-recipe-no-results]');
   const noResultsText = picker.querySelector('[data-meal-recipe-no-results-text]');
   const newRecipeLink = picker.querySelector('[data-new-recipe-link]');
-  const existingNames = JSON.parse(picker.dataset.existingRecipeNames || '[]').map(name => name.toLocaleLowerCase());
+  const existingNames = JSON.parse(picker.dataset.existingRecipeNames || '[]').map(name => window.normalizeSearchText(name));
 
   function updateResults() {
-    const query = search.value.trim().toLocaleLowerCase();
+    const query = window.normalizeSearchText(search.value.trim());
     const visibleResults = results.filter(result => {
-      const visible = Boolean(query) && result.dataset.recipeName.includes(query);
+      const visible = Boolean(query) && window.normalizeSearchText(result.dataset.recipeName).includes(query);
       result.hidden = !visible;
       return visible;
     });

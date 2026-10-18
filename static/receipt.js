@@ -6,9 +6,9 @@
       return null;
     }
 
-    const value = input.value.trim().toLocaleLowerCase();
+    const value = window.normalizeSearchText(input.value.trim());
     return Array.from(list.options).find(
-      (option) => option.value.trim().toLocaleLowerCase() === value
+      (option) => window.normalizeSearchText(option.value.trim()) === value
     );
   }
 
