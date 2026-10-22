@@ -5,6 +5,7 @@
 <div class="two-column">
   <section class="form-panel">
     {% if recipe.picture %}<img class="recipe-hero" src="{{ recipe.picture }}" alt="{{ recipe.name }}">{% endif %}
+    {% if recipe.yield_factor is not none and recipe.yield_factor != 1 %}<p class="field-help">Rendita: <strong>{{ recipe.yield_factor|qty }}</strong></p>{% endif %}
     <h3>Ingredienti</h3>
     <div class="item-list">
       {% for ingredient in recipe.ingredients %}

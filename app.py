@@ -2564,7 +2564,7 @@ def validate_meal_data(data: dict[str, Any]) -> list[str]:
 
 
 def empty_recipe_form() -> dict[str, Any]:
-    return {"name": "", "servings": 2, "meal_type": "altro", "use_automatically": True, "picture": "", "notes": ""}
+    return {"name": "", "servings": 2, "yield_factor": 1, "meal_type": "altro", "use_automatically": True, "picture": "", "notes": ""}
 
 
 def empty_ingredient() -> dict[str, Any]:
@@ -2624,6 +2624,7 @@ def recipe_form_data(form: Any) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     return {
         "name": clean_text(form.get("name")),
         "servings": parse_optional_int(form.get("servings"), 2) or 2,
+        "yield_factor": parse_optional_quantity(form.get("yield_factor")) if form.get("yield_factor") not in (None, "") else 1,
         "meal_type": clean_text(form.get("meal_type"), "altro"),
         "use_automatically": "1" in form.getlist("use_automatically"),
         "picture": picture,
@@ -2637,6 +2638,8 @@ def validate_recipe_data(data: dict[str, Any], ingredients: list[dict[str, Any]]
         errors.append("Il nome della ricetta è obbligatorio.")
     if int(data.get("servings") or 0) <= 0:
         errors.append("Il numero di persone della ricetta deve essere maggiore di zero.")
+    if data.get("yield_factor") is None or not 0 <= float(data["yield_factor"]) <= 1:
+        errors.append("La rendita deve essere compresa tra 0 e 1.")
     if data.get("meal_type") not in RECIPE_MEAL_TYPES:
         errors.append("Scegli un tipo di pasto valido.")
     if not ingredients:
@@ -2652,7 +2655,7 @@ def validate_recipe_data(data: dict[str, Any], ingredients: list[dict[str, Any]]
 def create_recipe(data: dict[str, Any], ingredients: list[dict[str, Any]]) -> int:
     supabase = get_supabase()
     response = supabase.table("recipes").insert({
-        "name": data["name"], "servings": data["servings"], "meal_type": data["meal_type"],
+        "name": data["name"], "servings": data["servings"], "yield_factor": data["yield_factor"], "meal_type": data["meal_type"],
         "use_automatically": data["use_automatically"], "picture": data.get("picture") or "", "notes": data.get("notes") or "",
         "updated_at": utc_now(),
     }).execute()
@@ -2677,7 +2680,7 @@ def save_recipe_ingredients(recipe_id: int, ingredients: list[dict[str, Any]]) -
 def update_recipe(recipe_id: int, data: dict[str, Any], ingredients: list[dict[str, Any]]) -> None:
     supabase = get_supabase()
     supabase.table("recipes").update({
-        "name": data["name"], "servings": data["servings"], "meal_type": data["meal_type"],
+        "name": data["name"], "servings": data["servings"], "yield_factor": data["yield_factor"], "meal_type": data["meal_type"],
         "use_automatically": data["use_automatically"], "picture": data.get("picture") or "", "notes": data.get("notes") or "", "updated_at": utc_now(),
     }).eq("id", recipe_id).execute()
     supabase.table("recipe_ingredients").delete().eq("recipe_id", recipe_id).execute()
@@ -3048,9 +3051,26 @@ def prepare_recipe_preview(recipe: dict[str, Any], mode: str, value: float) -> d
     return {"mode": mode, "value": value, "total": total, "ingredients": result}
 
 
-def add_prepared_recipe_to_inventory(recipe: dict[str, Any], location: str = "frigo") -> int:
-    """Store one cooked batch of a recipe in the inventory."""
+def add_prepared_recipe_to_inventory(
+    recipe: dict[str, Any],
+    rows: list[dict[str, Any]],
+    location: str = "frigo",
+) -> int | None:
+    """Store the measured output of one cooked batch in the inventory."""
     location = location if location in LOCATIONS else "frigo"
+    total = sum(row["required"] for row in rows if row["unit"] == "g")
+    yield_factor = recipe.get("yield_factor")
+    yield_factor = 1 if yield_factor is None else float(yield_factor)
+    if total > 0:
+        quantity = total * yield_factor
+        unit = "g"
+    else:
+        # Recipes made only of countable ingredients keep the historical
+        # one-cooked-dish representation.
+        quantity = yield_factor
+        unit = "pz"
+    if quantity <= 0:
+        return None
     expiry_date = None
     expiry_estimated = 0
     if location == "frigo":
@@ -3064,8 +3084,8 @@ def add_prepared_recipe_to_inventory(recipe: dict[str, Any], location: str = "fr
         None,
         {
             "recipe_id": recipe["id"],
-            "quantity": 1,
-            "unit": "pz",
+            "quantity": quantity,
+            "unit": unit,
             "location": location,
             "expiry_date": expiry_date,
             "expiry_estimated": expiry_estimated,
@@ -3095,7 +3115,7 @@ def prepare_recipe_from_inventory(
         if needed > 0.000001:
             add_or_increment_shopping_item(row["item_prior_id"], needed, row["unit"], row["default_location"], notes=f"Preparazione: {recipe['name']}")
             shopping_count += 1
-    add_prepared_recipe_to_inventory(recipe, location)
+    add_prepared_recipe_to_inventory(recipe, rows, location)
     get_supabase().table("recipe_history").upsert({"recipe_id": recipe["id"], "cooked_on": date.today().isoformat()}, on_conflict="recipe_id,cooked_on").execute()
     return {"shopping_count": shopping_count}
 
