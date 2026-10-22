@@ -1441,7 +1441,7 @@ def register_routes(app: Flask) -> None:
         if mode == "quantity" and prepare_recipe_preview(recipe, mode, value)["total"] <= 0:
             flash("La quantità totale non è calcolabile per questa ricetta.", "error")
             return redirect_inventory_context()
-        result = prepare_recipe_from_inventory(recipe, mode, value)
+        result = prepare_recipe_from_inventory(recipe, mode, value, location=item.get("location"))
         if result["shopping_count"]:
             flash(f"Altro {recipe['name']} preparato. {result['shopping_count']} ingredienti aggiunti alla lista della spesa.", "success")
         else:
@@ -2901,8 +2901,14 @@ def inventory_quantity_in_unit(item: dict[str, Any], prior: dict[str, Any] | Non
     if measure_quantity is None and quantity_pz is not None:
         measure_quantity, measure_unit = piece_measure_quantity(float(quantity_pz), prior)
     if measure_quantity is not None and not measure_unit:
-        typical_unit = clean_text((prior or {}).get("typical_unit"))
-        measure_unit = typical_unit if typical_unit in MEASURE_UNITS else item.get("unit")
+        # Legacy rows do not always have measure_unit. In that case the
+        # measured value is stored in the row's unit, not in the prior's
+        # typical unit (e.g. 1000 g must not become 1000 kg).
+        row_unit = clean_text(item.get("unit"))
+        measure_unit = row_unit if row_unit in MEASURE_UNITS else None
+        if not measure_unit:
+            typical_unit = clean_text((prior or {}).get("typical_unit"))
+            measure_unit = typical_unit if typical_unit in MEASURE_UNITS else item.get("unit")
     if measure_quantity is None or not measure_unit:
         return 0.0
     return convert_quantity(float(measure_quantity), measure_unit, target_unit)
@@ -3042,7 +3048,39 @@ def prepare_recipe_preview(recipe: dict[str, Any], mode: str, value: float) -> d
     return {"mode": mode, "value": value, "total": total, "ingredients": result}
 
 
-def prepare_recipe_from_inventory(recipe: dict[str, Any], mode: str, value: float) -> dict[str, Any]:
+def add_prepared_recipe_to_inventory(recipe: dict[str, Any], location: str = "frigo") -> int:
+    """Store one cooked batch of a recipe in the inventory."""
+    location = location if location in LOCATIONS else "frigo"
+    expiry_date = None
+    expiry_estimated = 0
+    if location == "frigo":
+        expiry_date = (date.today() + timedelta(days=4)).isoformat()
+        expiry_estimated = 1
+    elif location == "freezer":
+        expiry_date = add_calendar_months(date.today(), 2).isoformat()
+        expiry_estimated = 1
+
+    return create_inventory_item(
+        None,
+        {
+            "recipe_id": recipe["id"],
+            "quantity": 1,
+            "unit": "pz",
+            "location": location,
+            "expiry_date": expiry_date,
+            "expiry_estimated": expiry_estimated,
+            "notes": "Preparata oggi",
+        },
+    )
+
+
+def prepare_recipe_from_inventory(
+    recipe: dict[str, Any],
+    mode: str,
+    value: float,
+    *,
+    location: str = "frigo",
+) -> dict[str, Any]:
     rows = _recipe_preparation_rows(recipe, mode, value)
     inventory = get_supabase().table("inventory_items").select("*").execute().data or []
     grouped = _recipe_inventory_rows(inventory)
@@ -3057,6 +3095,7 @@ def prepare_recipe_from_inventory(recipe: dict[str, Any], mode: str, value: floa
         if needed > 0.000001:
             add_or_increment_shopping_item(row["item_prior_id"], needed, row["unit"], row["default_location"], notes=f"Preparazione: {recipe['name']}")
             shopping_count += 1
+    add_prepared_recipe_to_inventory(recipe, location)
     get_supabase().table("recipe_history").upsert({"recipe_id": recipe["id"], "cooked_on": date.today().isoformat()}, on_conflict="recipe_id,cooked_on").execute()
     return {"shopping_count": shopping_count}
 
