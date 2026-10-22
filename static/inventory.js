@@ -12,6 +12,11 @@
 
   const sortSelect = document.querySelector("[data-inventory-sort-select]");
   const searchInput = document.querySelector("[data-inventory-search]");
+  const categoryFilter = document.querySelector("[data-category-filter]");
+  const categoryOptions = categoryFilter
+    ? Array.from(categoryFilter.querySelectorAll("[data-category-option]"))
+    : [];
+  const categoryCount = categoryFilter?.querySelector("[data-category-filter-count]");
 
   // ── Sorting ────────────────────────────────────────────────────────────────
 
@@ -113,16 +118,29 @@
 
   function applyFilter(query) {
     const needle = window.normalizeSearchText(query.trim());
+    const selectedCategories = new Set(
+      categoryOptions.filter((option) => option.checked).map((option) => window.normalizeSearchText(option.value)),
+    );
     getItems().forEach((item) => {
       const name = window.normalizeSearchText(item.dataset.name);
       const cat = window.normalizeSearchText(item.dataset.category);
-      item.hidden = needle !== "" && !name.includes(needle) && !cat.includes(needle);
+      const matchesSearch = needle === "" || name.includes(needle) || cat.includes(needle);
+      const matchesCategory = selectedCategories.size === 0 || selectedCategories.has(cat);
+      item.hidden = !matchesSearch || !matchesCategory;
     });
+    if (categoryCount) {
+      const count = selectedCategories.size;
+      categoryCount.textContent = count;
+      categoryCount.hidden = count === 0;
+    }
   }
 
   if (searchInput) {
     searchInput.addEventListener("input", () => applyFilter(searchInput.value));
   }
+  categoryOptions.forEach((option) => {
+    option.addEventListener("change", () => applyFilter(searchInput?.value || ""));
+  });
 
   // Cotto/Aperto: detach the selected amount into a new refrigerated item.
   const preparationDialog = document.querySelector("[data-preparation-dialog]");
@@ -178,10 +196,12 @@
         });
         const data = await response.json();
         if (!response.ok || !data.ok) throw new Error(data.error || "Salvataggio non riuscito.");
+        const oldQuantity = Number(editingTrigger.dataset.itemQuantity);
         editingTrigger.textContent = data.qty_display;
         editingTrigger.dataset.itemQuantity = data.quantity;
         editingTrigger.dataset.itemUnit = data.unit;
-        editingTrigger.closest("article")?.classList.toggle("is-zero", Number(data.quantity) <= 0);
+        const card = editingTrigger.closest("article");
+        card?.classList.toggle("is-zero", Number(data.quantity) <= 0);
         const change = editingTrigger.closest(".item-main")?.querySelector("[data-today-quantity-change]");
         if (change) {
           const amount = Number(data.today_quantity_change || 0);
@@ -191,6 +211,10 @@
           change.innerHTML = `<span aria-hidden="true">${amount > 0 ? "▲" : "▼"}</span> ${data.today_quantity_change_display || Math.abs(amount)}`;
         }
         quantityDialog.close();
+        if (card?.hasAttribute("data-inventory-zero-confirm") && oldQuantity > 0 && Number(data.quantity) <= 0) {
+          if (card) card.dataset.restoreQuantity = oldQuantity;
+          window.promptInventoryZero?.(card);
+        }
       } catch (err) {
         error.textContent = err.message;
         error.hidden = false;

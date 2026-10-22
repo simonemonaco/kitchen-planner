@@ -463,6 +463,10 @@ button {
 }
 
 .modified-inventory-card.is-zero {
+  opacity: 1;
+}
+
+.modified-inventory-card.is-zero > *:not(.modified-undo-button) {
   opacity: .52;
 }
 
@@ -708,6 +712,9 @@ button {
 .quantity-edit-dialog { border: 0; border-radius: 14px; padding: 0; max-width: min(92vw, 380px); width: 100%; background: transparent; }
 .quantity-edit-dialog::backdrop { background: rgb(20 35 28 / 45%); }
 .quantity-edit-dialog .form-panel { margin: 0; }
+.quantity-zero-dialog { border: 0; border-radius: 14px; padding: 0; max-width: min(92vw, 380px); width: 100%; background: transparent; }
+.quantity-zero-dialog::backdrop { background: rgb(20 35 28 / 45%); }
+.quantity-zero-dialog .form-panel { margin: 0; }
 .dialog-item-name { margin: -2px 0 12px; color: var(--muted); font-weight: 700; }
 .dialog-error { color: var(--danger); font-weight: 700; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
@@ -1405,6 +1412,70 @@ legend { padding: 0 6px; color: var(--brand-dark); font-weight: 850; }
 .priors-controls .view-switch {
   margin: 0;
   flex-shrink: 0;
+}
+
+.category-filter {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.category-filter summary {
+  list-style: none;
+}
+
+.category-filter summary::-webkit-details-marker {
+  display: none;
+}
+
+.category-filter[open] summary {
+  background: var(--surface-strong);
+}
+
+.category-filter-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  right: 0;
+  display: grid;
+  gap: 8px;
+  min-width: 190px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 12px 28px rgba(18, 42, 31, 0.14);
+}
+
+.category-filter-menu label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.88rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.category-filter-menu input {
+  accent-color: var(--brand);
+}
+
+.filter-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  margin-left: 3px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--brand);
+  color: white;
+  font-size: 0.72rem;
+}
+
+.filter-count[hidden] {
+  display: none;
 }
 
 .inventory-search {

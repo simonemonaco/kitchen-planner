@@ -55,10 +55,15 @@
 
   <div class="inventory-controls">
     <input type="search" class="inventory-search" data-inventory-search placeholder="Cerca prodotto o categoria..." aria-label="Cerca nell'inventario">
-    <section class="view-switch" aria-label="Modalita' visualizzazione inventario">
-      <a class="{% if view_mode == 'grid' %}active{% endif %}" href="{{ url_for('index', location=selected_location, view='grid') }}"><i class="fa-solid fa-table-cells-large" aria-hidden="true"></i></a>
-      <a class="{% if view_mode == 'list' %}active{% endif %}" href="{{ url_for('index', location=selected_location, view='list') }}"><i class="fa-solid fa-list" aria-hidden="true"></i></a>
-      <span aria-hidden="true" class="sort-sep">|</span>
+    <details class="category-filter" data-category-filter>
+      <summary class="small-button secondary"><i class="fa-solid fa-filter" aria-hidden="true"></i> Filtra categoria <span class="filter-count" data-category-filter-count hidden>0</span></summary>
+      <div class="category-filter-menu" role="group" aria-label="Filtra per categoria">
+        {% for category in categories %}
+          <label><input type="checkbox" value="{{ category|lower }}" data-category-option> {{ category }}</label>
+        {% endfor %}
+      </div>
+    </details>
+    <section class="view-switch" aria-label="Ordinamento inventario">
       <label class="sort-select-wrap" aria-label="Ordina per">
         <i class="fa-solid fa-arrow-up-wide-short" aria-hidden="true"></i>
         <select data-inventory-sort-select>
@@ -116,7 +121,7 @@
                     {{ item.category }}
                   {% endif %}
                 </p>
-                <div class="quantity-adjust" data-async-qty aria-label="Regola quantita' {{ item.name }}">
+                <div class="quantity-adjust" data-async-qty data-inventory-zero-confirm aria-label="Regola quantita' {{ item.name }}">
                   <form action="{{ url_for('adjust_inventory_quantity', item_id=item.id, location=selected_location, view=view_mode) }}" method="post" data-qty-form>
                     <input type="hidden" name="direction" value="dec">
                     <button class="small-button secondary icon-only" type="submit" aria-label="Diminuisci quantita'"><i class="fa-solid fa-minus" aria-hidden="true"></i></button>
@@ -146,7 +151,8 @@
               <div class="row-actions">
                 {% if item.recipe_id %}<button class="small-button secondary" type="button" data-open-prepare-recipe data-recipe-id="{{ item.recipe_id }}" data-recipe-name="{{ item.recipe_name or item.name|e }}" data-default-people="{{ item.recipe_servings or 2 }}" data-label="Prepara altro" data-preview-url="{{ url_for('recipe_prepare_preview', recipe_id=item.recipe_id) }}" data-submit-url="{{ url_for('prepare_recipe_from_inventory_route', item_id=item.id, location=selected_location, view=view_mode) }}"><i class="fa-solid fa-kitchen-set" aria-hidden="true"></i> Prepara altro</button>{% elif item.preparation_status == 'none' or not item.preparation_status %}<button class="small-button secondary" type="button" data-open-preparation data-item-id="{{ item.id }}" data-item-name="{{ item.name }}" data-item-quantity="{{ item.quantity|qty }}" data-item-unit="{{ item.unit }}"><i class="fa-solid fa-kitchen-set" aria-hidden="true"></i> Cotto/Aperto</button>{% endif %}
                 <a class="small-button secondary" href="{{ url_for('edit_inventory_item', item_id=item.id) }}"><i class="fa-solid fa-pen" style="margin: 0;" aria-hidden="true"></i></a> <!-- Edit -->
-                <form action="{{ url_for('finish_inventory_item', item_id=item.id, location=selected_location, view=view_mode) }}" method="post" data-inventory-navigation>
+                {% if not item.recipe_id %}<a class="small-button secondary" href="{{ url_for('edit_prior', prior_id=item.item_prior_id, return_to=url_for('index', location=selected_location)) }}"><i class="fa-solid fa-sliders" aria-hidden="true"></i> Prior</a>{% endif %}
+                <form action="{{ url_for('finish_inventory_item', item_id=item.id, location=selected_location, view=view_mode) }}" method="post" data-inventory-navigation data-finish-inventory-form>
                   <button class="small-button" type="submit"><i class="fa-solid fa-check" aria-hidden="true"></i> Finito</button>
                 </form>
                 <form action="{{ url_for('delete_inventory', item_id=item.id, location=selected_location, view=view_mode) }}" method="post" data-inventory-navigation>
@@ -199,7 +205,7 @@
                     <span aria-hidden="true">{% if item.today_quantity_change > 0 %}▲{% else %}▼{% endif %}</span>
                     {{ item.today_quantity_change|abs|qty }} {{ item.unit }}
                   </div>
-                <div class="quantity-adjust" data-async-qty aria-label="Regola quantita' {{ item.name }}">
+                <div class="quantity-adjust" data-async-qty data-inventory-zero-confirm aria-label="Regola quantita' {{ item.name }}">
                   <form action="{{ url_for('adjust_inventory_quantity', item_id=item.id, location=selected_location, view=view_mode) }}" method="post" data-qty-form>
                     <input type="hidden" name="direction" value="dec">
                     <button class="small-button secondary icon-only" type="submit" aria-label="Diminuisci quantita'"><i class="fa-solid fa-minus" aria-hidden="true"></i></button>
@@ -237,9 +243,9 @@
                 {% if item.recipe_id %}
                   <a class="small-button secondary" href="{{ url_for('edit_recipe', recipe_id=item.recipe_id) }}"><i class="fa-solid fa-utensils" aria-hidden="true"></i> Modifica prior</a>
                 {% else %}
-                  <a class="small-button secondary" href="{{ url_for('edit_prior', prior_id=item.item_prior_id) }}"><i class="fa-solid fa-sliders" aria-hidden="true"></i> Prior</a>
+                  <a class="small-button secondary" href="{{ url_for('edit_prior', prior_id=item.item_prior_id, return_to=url_for('index', location=selected_location)) }}"><i class="fa-solid fa-sliders" aria-hidden="true"></i> Prior</a>
                 {% endif %}
-                <form action="{{ url_for('finish_inventory_item', item_id=item.id, location=selected_location, view=view_mode) }}" method="post" data-inventory-navigation>
+                <form action="{{ url_for('finish_inventory_item', item_id=item.id, location=selected_location, view=view_mode) }}" method="post" data-inventory-navigation data-finish-inventory-form>
                   <button class="small-button" type="submit"><i class="fa-solid fa-check" aria-hidden="true"></i> Finito</button>
                 </form>
                 <form action="{{ url_for('delete_inventory', item_id=item.id, location=selected_location, view=view_mode) }}" method="post" data-inventory-navigation>
@@ -258,6 +264,18 @@
       </div>
     {% endif %}
   </section>
+
+  <dialog class="quantity-zero-dialog" data-quantity-zero-dialog>
+    <form method="dialog" class="form-panel compact">
+      <h3>Quantità esaurita</h3>
+      <p class="dialog-item-name" data-zero-item-name></p>
+      <p>Vuoi segnare questo prodotto come finito?</p>
+      <div class="dialog-actions">
+        <button class="small-button secondary" type="button" data-zero-cancel>Annulla</button>
+        <button class="button" type="button" data-zero-confirm>Segna come finito</button>
+      </div>
+    </form>
+  </dialog>
 
   <dialog class="preparation-dialog" data-preparation-dialog>
     <form method="post" data-preparation-form>

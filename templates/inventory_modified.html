@@ -18,20 +18,24 @@
       <div class="pantry-grid modified-inventory-grid">
         {% for item in items %}
           <article class="pantry-card modified-inventory-card{% if item.quantity <= 0 %} is-zero{% endif %}">
-            <button class="modified-undo-button" type="button" data-open-undo data-item-id="{{ item.id }}" data-item-name="{{ item.name }}" aria-label="Annulla modifica di {{ item.name }}" title="Annulla modifica">
+            <button class="modified-undo-button" type="button" data-open-undo data-item-id="{{ item.id }}" data-item-name="{{ item.name }}" aria-label="Ripristina {{ item.name }} nell'inventario" title="Ripristina nell'inventario">
               <i class="fa-solid fa-rotate-left" aria-hidden="true"></i>
             </button>
             <div class="product-media">
               {% if item.recipe_id %}
                 <span class="preparation-badge recipe"><i class="fa-solid fa-fire" aria-hidden="true"></i><span class="sr-only">Ricetta cucinata</span></span>
               {% endif %}
-              <a href="{{ url_for('edit_inventory_item', item_id=item.id) }}">
-                {% if item.picture %}
-                  <img src="{{ item.picture }}" alt="{{ item.name }}">
-                {% else %}
-                  <span>{{ item.name[:1] }}</span>
-                {% endif %}
-              </a>
+              {% if item.finished %}
+                <span>{% if item.picture %}<img src="{{ item.picture }}" alt="{{ item.name }}">{% else %}{{ item.name[:1] }}{% endif %}</span>
+              {% else %}
+                <a href="{{ url_for('edit_inventory_item', item_id=item.id) }}">
+                  {% if item.picture %}
+                    <img src="{{ item.picture }}" alt="{{ item.name }}">
+                  {% else %}
+                    <span>{{ item.name[:1] }}</span>
+                  {% endif %}
+                </a>
+              {% endif %}
             </div>
             <div class="item-main">
               <h3>{{ item.name }}</h3>
@@ -52,7 +56,7 @@
       <div class="empty-state modified-empty-state">
         <i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i>
         <h3>Nessuna modifica oggi</h3>
-        <p>Qui compariranno i prodotti quando aumenterai o ridurrai la loro quantità nell'inventario.</p>
+        <p>Qui compariranno i prodotti quando ne modificherai la quantità o li segnerai come finiti.</p>
       </div>
     {% endif %}
   </section>

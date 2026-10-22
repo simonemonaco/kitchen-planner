@@ -319,6 +319,14 @@ def redirect_inventory_context():
     return redirect(url_for("index", **params))
 
 
+def valid_return_to(value: str | None) -> str | None:
+    """Accept only local absolute paths for post-edit redirects."""
+    target = (value or "").strip()
+    if target.startswith("/") and not target.startswith("//"):
+        return target
+    return None
+
+
 def register_routes(app: Flask) -> None:
     @app.get("/healthz")
     def healthz():
@@ -327,12 +335,9 @@ def register_routes(app: Flask) -> None:
     @app.get("/")
     def index():
         location = request.args.get("location", "").strip()
-        requested_view = request.args.get("view", "").strip().lower()
         selected_location = location if location in LOCATIONS else ""
-        if requested_view in {"grid", "list"}:
-            view_mode = requested_view
-        else:
-            view_mode = "grid"
+        # L'inventario ha una sola modalità di visualizzazione: la griglia.
+        view_mode = "grid"
         items = list_inventory_items(location if location in LOCATIONS else None)
         stats = load_dashboard_stats()
         return render_template(
@@ -478,12 +483,34 @@ def register_routes(app: Flask) -> None:
             flash("Prodotto non trovato.", "error")
             return redirect(url_for("index"))
 
+        prior = get_item_prior(int(item["item_prior_id"])) if item.get("item_prior_id") else None
+        requested_restore_quantity = parse_optional_quantity(request.form.get("restore_quantity"))
+        restore_quantity = requested_restore_quantity if requested_restore_quantity and requested_restore_quantity > 0 else float(item.get("quantity") or 0)
+        restore_quantities = resolve_inventory_quantities(
+            {"quantity": restore_quantity, "unit": item.get("unit") or "pz"},
+            prior,
+        )
+        snapshot = merge_item_with_prior(item, prior, preserve_item_unit=True)
+        snapshot = snapshot | {
+            "restore_quantity": restore_quantity,
+            "restore_quantity_pz": restore_quantities.get("quantity_pz"),
+            "restore_measure_quantity": restore_quantities.get("measure_quantity"),
+            "quantity": 0,
+            "quantity_pz": 0,
+            "measure_quantity": 0,
+        }
         if item.get("recipe_id"):
+            record_inventory_quantity_change(
+                item_id,
+                -max(float(item.get("quantity") or 1), 1),
+                item.get("unit") or "pz",
+                snapshot=snapshot,
+            )
             delete_inventory_item(item_id)
             flash("Ricetta cucinata rimossa dall'inventario.", "success")
             return redirect_inventory_context()
 
-        prior = get_item_prior(int(item["item_prior_id"])) or {}
+        prior = prior or {}
         other_inventory = (
             get_supabase().table("inventory_items")
             .select("*")
@@ -522,6 +549,18 @@ def register_routes(app: Flask) -> None:
                 unit=shopping_unit,
                 target_location=item["location"],
                 notes=item["notes"],
+            )
+        # Keep today's quantity history available after the inventory row is
+        # deleted. The FK is SET NULL by the accompanying migration.
+        get_supabase().table("inventory_quantity_changes").update(
+            {"item_snapshot": snapshot}
+        ).eq("inventory_item_id", item_id).eq("changed_on", date.today().isoformat()).execute()
+        if float(item.get("quantity") or 0) > 0:
+            record_inventory_quantity_change(
+                item_id,
+                -float(item["quantity"]),
+                item.get("unit") or "pz",
+                snapshot=snapshot,
             )
         delete_inventory_item(item_id)
         flash(
@@ -693,11 +732,45 @@ def register_routes(app: Flask) -> None:
     @app.post("/inventory/<int:item_id>/undo-quantity-change")
     def undo_inventory_quantity_change(item_id: int):
         item = get_inventory_item(item_id)
+        today = date.today().isoformat()
         if not item:
-            flash("Prodotto non trovato.", "error")
+            # A finished item is no longer in inventory. Restore it from the
+            # snapshot saved with today's finish change.
+            changes = (
+                get_supabase()
+                .table("inventory_quantity_changes")
+                .select("id,quantity,unit,item_snapshot")
+                .is_("inventory_item_id", "null")
+                .eq("changed_on", today)
+                .execute()
+                .data
+                or []
+            )
+            changes = [
+                change for change in changes
+                if str((change.get("item_snapshot") or {}).get("id")) == str(item_id)
+            ]
+            if not changes:
+                flash("Prodotto non trovato.", "error")
+                return redirect(url_for("modified_inventory"))
+
+            snapshot = changes[-1].get("item_snapshot") or {}
+            prior_id = snapshot.get("item_prior_id")
+            prior = get_item_prior(int(prior_id)) if prior_id else None
+            restored = snapshot | {
+                "quantity": snapshot.get("restore_quantity") or 0,
+                "quantity_pz": snapshot.get("restore_quantity_pz"),
+                "measure_quantity": snapshot.get("restore_measure_quantity"),
+            }
+            payload = inventory_storage_payload(prior_id, restored, prior)
+            response = get_supabase().table("inventory_items").insert(payload).execute()
+            if not response.data:
+                flash("Ripristino del prodotto non riuscito.", "error")
+                return redirect(url_for("modified_inventory"))
+            get_supabase().table("inventory_quantity_changes").delete().in_("id", [change["id"] for change in changes]).execute()
+            flash(f"Modifica annullata: {snapshot.get('name', 'prodotto')} è tornato nell'inventario.", "success")
             return redirect(url_for("modified_inventory"))
 
-        today = date.today().isoformat()
         changes = (
             get_supabase()
             .table("inventory_quantity_changes")
@@ -1478,6 +1551,7 @@ def register_routes(app: Flask) -> None:
     @app.route("/settings/priors/<int:prior_id>/edit", methods=("GET", "POST"))
     def edit_prior(prior_id: int):
         prior = get_item_prior(prior_id)
+        return_to = valid_return_to(request.values.get("return_to"))
         if not prior:
             flash("Prodotto prior non trovato.", "error")
             return redirect(url_for("priors"))
@@ -1491,13 +1565,14 @@ def register_routes(app: Flask) -> None:
                 return render_template(
                     "prior_form.html",
                     item=data | {"id": prior_id},
+                    return_to=return_to,
                 ), 400
 
             update_item_prior(prior_id, data)
             flash("Prodotto prior aggiornato.", "success")
-            return redirect(url_for("priors"))
+            return redirect(return_to or url_for("priors"))
 
-        return render_template("prior_form.html", item=dict(prior))
+        return render_template("prior_form.html", item=dict(prior), return_to=return_to)
 
     @app.post("/settings/priors/<int:prior_id>/delete")
     def delete_prior(prior_id: int):
@@ -3581,7 +3656,7 @@ def list_modified_inventory_items() -> list[dict[str, Any]]:
     changes = (
         get_supabase()
         .table("inventory_quantity_changes")
-        .select("inventory_item_id,quantity,unit,changed_at")
+        .select("inventory_item_id,quantity,unit,changed_at,item_snapshot")
         .eq("changed_on", today)
         .order("changed_at", desc=True)
         .execute()
@@ -3591,13 +3666,32 @@ def list_modified_inventory_items() -> list[dict[str, Any]]:
     if not changes:
         return []
 
-    item_ids = sorted({int(change["inventory_item_id"]) for change in changes})
-    raw_items = get_supabase().table("inventory_items").select("*").in_("id", item_ids).execute().data or []
+    item_ids = sorted({int(change["inventory_item_id"]) for change in changes if change.get("inventory_item_id") is not None})
+    raw_items = (
+        get_supabase().table("inventory_items").select("*").in_("id", item_ids).execute().data or []
+        if item_ids
+        else []
+    )
     raw_by_id = {int(item["id"]): item for item in raw_items}
     prior_map = load_item_prior_map([int(item["item_prior_id"]) for item in raw_items if item.get("item_prior_id")])
     delta_map: dict[int, float] = {}
+    finished_map: dict[str, dict[str, Any]] = {}
     for change in changes:
-        item_id = int(change["inventory_item_id"])
+        item_id = change.get("inventory_item_id")
+        if item_id is None:
+            snapshot = change.get("item_snapshot") or {}
+            if not snapshot:
+                continue
+            key = str(snapshot.get("id") or snapshot.get("name") or change.get("changed_at"))
+            finished = finished_map.setdefault(
+                key,
+                snapshot | {"today_quantity_change": 0, "finished": True},
+            )
+            finished["today_quantity_change"] += convert_quantity(
+                float(change["quantity"]), change.get("unit"), snapshot.get("unit") or "pz"
+            )
+            continue
+        item_id = int(item_id)
         raw_item = raw_by_id.get(item_id)
         if not raw_item:
             continue
@@ -3615,6 +3709,7 @@ def list_modified_inventory_items() -> list[dict[str, Any]]:
             merge_item_with_prior(raw_item, prior_map.get(int(raw_item["item_prior_id"])) if raw_item.get("item_prior_id") else None)
             | {"today_quantity_change": delta}
         )
+    result.extend(item for item in finished_map.values() if abs(item["today_quantity_change"]) >= 0.000001)
     return sorted(result, key=lambda row: (row.get("name") or "").casefold())
 
 
@@ -3704,7 +3799,13 @@ def update_inventory_item(
         record_inventory_quantity_change(item_id, quantity_delta, data["unit"])
 
 
-def record_inventory_quantity_change(item_id: int, quantity: float, unit: str) -> None:
+def record_inventory_quantity_change(
+    item_id: int,
+    quantity: float,
+    unit: str,
+    *,
+    snapshot: dict[str, Any] | None = None,
+) -> None:
     if not quantity:
         return
     get_supabase().table("inventory_quantity_changes").insert(
@@ -3713,6 +3814,7 @@ def record_inventory_quantity_change(item_id: int, quantity: float, unit: str) -
             "quantity": quantity,
             "unit": unit,
             "changed_on": date.today().isoformat(),
+            "item_snapshot": snapshot,
         }
     ).execute()
 

@@ -11,6 +11,9 @@
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
 
+      const pill = wrapper.querySelector("[data-qty-pill]");
+      const oldQuantity = Number(pill?.dataset.itemQuantity);
+
       const btn = form.querySelector("button[type='submit']");
       if (btn) btn.disabled = true;
 
@@ -25,7 +28,6 @@
 
         const data = await resp.json();
         if (data.ok) {
-          const pill = wrapper.querySelector("[data-qty-pill]");
           if (pill) {
             pill.textContent = data.qty_display;
             if (data.quantity != null) pill.dataset.itemQuantity = data.quantity;
@@ -41,6 +43,10 @@
             change.classList.toggle("is-used", amount < 0);
             change.innerHTML = `<span aria-hidden="true">${amount > 0 ? "▲" : "▼"}</span> ${data.today_quantity_change_display || Math.abs(amount)}`;
           }
+          if (wrapper.hasAttribute("data-inventory-zero-confirm") && oldQuantity > 0 && Number(data.quantity) <= 0) {
+            if (card) card.dataset.restoreQuantity = oldQuantity;
+            window.promptInventoryZero?.(card);
+          }
         }
       } catch (_) {
         // Network error — let the native submit handle it
@@ -52,4 +58,45 @@
   }
 
   document.querySelectorAll("[data-async-qty] [data-qty-form]").forEach(attachForm);
+
+  const zeroDialog = document.querySelector("[data-quantity-zero-dialog]");
+  if (zeroDialog) {
+    const itemName = zeroDialog.querySelector("[data-zero-item-name]");
+    const finishButton = zeroDialog.querySelector("[data-zero-confirm]");
+    const cancelButton = zeroDialog.querySelector("[data-zero-cancel]");
+    let pendingCard = null;
+
+    window.promptInventoryZero = (card) => {
+      pendingCard = card;
+      itemName.textContent = card?.querySelector("h3")?.textContent?.trim() || "Questo prodotto";
+      zeroDialog.showModal();
+    };
+
+    cancelButton?.addEventListener("click", () => {
+      pendingCard = null;
+      zeroDialog.close();
+    });
+    finishButton?.addEventListener("click", () => {
+      const form = pendingCard?.querySelector("[data-finish-inventory-form]");
+      if (form && pendingCard?.dataset.restoreQuantity) {
+        let input = form.querySelector("[name='restore_quantity']");
+        if (!input) {
+          input = document.createElement("input");
+          input.type = "hidden";
+          input.name = "restore_quantity";
+          form.appendChild(input);
+        }
+        input.value = pendingCard.dataset.restoreQuantity;
+      }
+      pendingCard = null;
+      zeroDialog.close();
+      form?.requestSubmit();
+    });
+    zeroDialog.addEventListener("click", (event) => {
+      if (event.target === zeroDialog) {
+        pendingCard = null;
+        zeroDialog.close();
+      }
+    });
+  }
 })();
