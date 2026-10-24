@@ -35,6 +35,9 @@
           }
           const card = wrapper.closest("article");
           if (card) card.classList.toggle("is-zero", Number(data.quantity) <= 0);
+          const previousQuantity = data.previous_quantity == null
+            ? oldQuantity
+            : Number(data.previous_quantity);
           const change = wrapper.closest(".item-main")?.querySelector("[data-today-quantity-change]");
           if (change) {
             const amount = Number(data.today_quantity_change || 0);
@@ -43,8 +46,8 @@
             change.classList.toggle("is-used", amount < 0);
             change.innerHTML = `<span aria-hidden="true">${amount > 0 ? "▲" : "▼"}</span> ${data.today_quantity_change_display || Math.abs(amount)}`;
           }
-          if (wrapper.hasAttribute("data-inventory-zero-confirm") && oldQuantity > 0 && Number(data.quantity) <= 0) {
-            if (card) card.dataset.restoreQuantity = oldQuantity;
+          if (wrapper.hasAttribute("data-inventory-zero-confirm") && previousQuantity > 0 && Number(data.quantity) <= 0) {
+            if (card) card.dataset.restoreQuantity = previousQuantity;
             window.promptInventoryZero?.(card);
           }
         }

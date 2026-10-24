@@ -645,85 +645,62 @@ def register_routes(app: Flask) -> None:
             flash("Prodotto non trovato.", "error")
             return redirect(url_for("index"))
 
-        prior = get_item_prior(int(item["item_prior_id"])) if item.get("item_prior_id") else None
         direction = clean_text(request.form.get("direction")).lower()
+        quantity = None
         if direction == "edit":
             try:
-                new_quantity = float(str(request.form.get("quantity", "")).replace(",", "."))
+                quantity = float(str(request.form.get("quantity", "")).replace(",", "."))
             except (TypeError, ValueError):
-                new_quantity = 0
+                quantity = 0
             # Nell'inventario si modifica solo il numero: l'unità è quella
             # attualmente visibile (pezzi oppure quantità misurata del prior).
-            new_unit = item.get("unit") or "pz"
-            if new_quantity < 0 or new_unit not in UNITS:
+            unit = item.get("unit") or "pz"
+            if quantity < 0 or unit not in UNITS:
                 error = "Inserisci una quantità non negativa e un'unità valida."
                 if is_xhr:
                     return jsonify({"ok": False, "error": error}), 400
                 flash(error, "error")
                 return redirect(url_for("index"))
-            payload = item | {"quantity": new_quantity, "unit": new_unit}
-            if is_piece_unit(new_unit):
-                payload["quantity_pz"] = new_quantity
-                payload["measure_quantity"], payload["measure_unit"] = piece_measure_quantity(new_quantity, prior)
-            else:
-                payload["measure_quantity"] = new_quantity
-                payload["measure_unit"] = item.get("measure_unit") or new_unit
-                payload["quantity_pz"] = piece_quantity_from_measure(new_quantity, payload["measure_unit"], prior)
-            old_quantity = float(item.get("quantity") or 0)
-            update_inventory_item(item_id, item.get("item_prior_id"), payload, quantity_delta=new_quantity - old_quantity)
-            if is_xhr:
-                today_change = get_today_quantity_change(item_id, new_unit)
-                return jsonify({"ok": True, "qty_display": f"{_format_qty(new_quantity)} {new_unit}", "quantity": new_quantity, "unit": new_unit, "today_quantity_change": today_change, "today_quantity_change_display": f"{_format_qty(abs(today_change))} {new_unit}"})
-            return redirect(url_for("index", location=request.args.get("location", ""), view=request.args.get("view", "")))
-        if direction not in {"inc", "dec"}:
+        elif direction not in {"inc", "dec"}:
             if is_xhr:
                 return jsonify({"ok": False, "error": "Azione quantita' non valida."}), 400
             flash("Azione quantita' non valida.", "error")
             return redirect(url_for("index"))
 
-        current_quantity = float(item.get("quantity") or 0)
-        new_quantity, new_unit = adjust_quantity_with_unit(
-            current_quantity,
-            item.get("unit"),
-            direction,
+        result = (
+            get_supabase()
+            .rpc(
+                "adjust_inventory_quantity",
+                {
+                    "p_item_id": item_id,
+                    "p_direction": direction,
+                    "p_quantity": quantity,
+                    "p_unit": item.get("unit") or "pz",
+                    "p_changed_on": date.today().isoformat(),
+                },
+            )
+            .execute()
+            .data
         )
-
-        if new_quantity < 0:
+        if isinstance(result, list):
+            result = result[0] if result else {}
+        if not result or not result.get("ok"):
+            error = (result or {}).get("error", "Salvataggio non riuscito.")
             if is_xhr:
-                return jsonify({"ok": False, "error": "La quantita' non puo' scendere sotto zero."}), 400
-            flash("La quantita' non puo' scendere sotto zero.", "error")
+                return jsonify({"ok": False, "error": error}), 400
+            flash(error, "error")
             return redirect(url_for("index"))
 
-        payload = {
-            "quantity": new_quantity,
-            "unit": new_unit,
-            "quantity_pz": new_quantity if is_piece_unit(new_unit) else piece_quantity_from_measure(new_quantity, new_unit, prior),
-            "measure_quantity": (piece_measure_quantity(new_quantity, prior)[0] if is_piece_unit(new_unit) else new_quantity),
-            "location": item["location"],
-            "preparation_status": item.get("preparation_status") or "none",
-            "expiry_date": item.get("expiry_date"),
-            "expiry_estimated": item.get("expiry_estimated") or 0,
-            "notes": item.get("notes") or "",
-        }
-        old_unit = item.get("unit") or "pz"
-        old_base, old_factor = unit_factor(old_unit)
-        new_base, new_factor = unit_factor(new_unit)
-        quantity_delta = new_quantity - current_quantity
-        if old_base == new_base:
-            quantity_delta = new_quantity - (current_quantity * old_factor / new_factor)
-        update_inventory_item(
-            item_id,
-            item.get("item_prior_id"),
-            payload,
-            quantity_delta=quantity_delta,
-        )
+        new_quantity = float(result["quantity"])
+        new_unit = result["unit"]
+        today_change = float(result.get("today_quantity_change") or 0)
         if is_xhr:
-            today_change = get_today_quantity_change(item_id, new_unit)
             return jsonify({
                 "ok": True,
                 "qty_display": f"{_format_qty(new_quantity)} {new_unit}",
                 "quantity": new_quantity,
                 "unit": new_unit,
+                "previous_quantity": result.get("previous_quantity"),
                 "today_quantity_change": today_change,
                 "today_quantity_change_display": f"{_format_qty(abs(today_change))} {new_unit}",
             })
@@ -1000,25 +977,26 @@ def register_routes(app: Flask) -> None:
             flash("Seleziona almeno un prodotto da completare.", "error")
             return redirect(url_for("shopping"))
 
-        completed_count = 0
-        for item_id in selected_ids:
-            item = get_shopping_item(item_id)
-            if not item:
-                continue
-            error = complete_shopping_purchase(
-                item,
-                quantity=float(item["quantity"]),
-                unit=clean_text(item["unit"]),
-                target_location=item["target_location"],
-                typical_shelf_life_days=item["typical_shelf_life_days"],
-                cost=None,
-                purchased_at=utc_now(),
-                expiry_input=None,
+        results = (
+            get_supabase()
+            .rpc(
+                "complete_shopping_items",
+                {
+                    "p_item_ids": selected_ids,
+                    "p_purchased_at": utc_now(),
+                    "p_today": date.today().isoformat(),
+                },
             )
-            if error:
-                flash(f"{item['name']}: {error}", "error")
-                continue
-            completed_count += 1
+            .execute()
+            .data
+            or []
+        )
+        completed_count = 0
+        for result in results:
+            if result.get("completed"):
+                completed_count += 1
+            elif result.get("error"):
+                flash(f"{result.get('name', 'Prodotto')}: {result['error']}", "error")
 
         if completed_count:
             flash(f"{completed_count} prodotti spostati in inventario.", "success")
@@ -3900,49 +3878,24 @@ def add_or_increment_shopping_item(
     if is_household_prior(prior):
         quantity, unit = 1, "pz"
     quantities = resolve_inventory_quantities({"quantity": quantity, "unit": unit}, prior)
-    existing_response = (
-        supabase.table("shopping_items")
-        .select("*")
-        .eq("item_prior_id", item_prior_id)
-        .eq("unit", unit)
-        .eq("target_location", target_location)
-        .limit(1)
-        .execute()
-    )
-    existing = existing_response.data[0] if existing_response.data else None
-
-    if existing:
-        existing_notes = existing.get("notes") or ""
-        if not existing_notes:
-            merged_notes = notes or ""
-        elif not notes:
-            merged_notes = existing_notes
-        else:
-            merged_notes = f"{existing_notes}; {notes}"
-        supabase.table("shopping_items").update(
-            {
-                "quantity": float(existing.get("quantity") or 0) + quantity,
-                "quantity_pz": (float(existing.get("quantity_pz") or 0) + float(quantities["quantity_pz"])) if quantities["quantity_pz"] is not None and existing.get("quantity_pz") is not None else existing.get("quantity_pz"),
-                "measure_quantity": (float(existing.get("measure_quantity") or 0) + float(quantities["measure_quantity"])) if quantities["measure_quantity"] is not None and existing.get("measure_quantity") is not None else existing.get("measure_quantity"),
-                "notes": merged_notes,
-            }
-        ).eq("id", existing["id"]).execute()
-        return int(existing["id"])
-
-    response = supabase.table("shopping_items").insert(
+    response = supabase.rpc(
+        "add_or_increment_shopping_item",
         {
-            "item_prior_id": item_prior_id,
-            "quantity": quantity,
-            "unit": unit,
-            "quantity_pz": quantities["quantity_pz"],
-            "measure_quantity": quantities["measure_quantity"],
-            "target_location": target_location,
-            "notes": notes,
-        }
+            "p_item_prior_id": item_prior_id,
+            "p_quantity": quantity,
+            "p_unit": unit,
+            "p_quantity_pz": quantities["quantity_pz"],
+            "p_measure_quantity": quantities["measure_quantity"],
+            "p_target_location": target_location,
+            "p_notes": notes,
+        },
     ).execute()
-    if not response.data:
+    result = response.data
+    if isinstance(result, list):
+        result = result[0] if result else None
+    if result is None:
         raise RuntimeError("Inserimento shopping non riuscito.")
-    return int(response.data[0]["id"])
+    return int(result)
 
 
 def list_shopping_items() -> list[dict[str, Any]]:

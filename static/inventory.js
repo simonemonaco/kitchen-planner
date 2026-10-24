@@ -196,7 +196,9 @@
         });
         const data = await response.json();
         if (!response.ok || !data.ok) throw new Error(data.error || "Salvataggio non riuscito.");
-        const oldQuantity = Number(editingTrigger.dataset.itemQuantity);
+        const oldQuantity = data.previous_quantity == null
+          ? Number(editingTrigger.dataset.itemQuantity)
+          : Number(data.previous_quantity);
         editingTrigger.textContent = data.qty_display;
         editingTrigger.dataset.itemQuantity = data.quantity;
         editingTrigger.dataset.itemUnit = data.unit;

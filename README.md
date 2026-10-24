@@ -39,6 +39,11 @@ Tabelle richieste:
 
 In Supabase SQL Editor esegui lo script `scripts/supabase_schema.sql`.
 
+Poi esegui `scripts/20261023_optimize_shopping_inventory_operations.sql` per
+abilitare le operazioni atomiche di inventario e lista della spesa. Lo script
+accorpa eventuali voci duplicate della lista (sommando quantità e note) prima
+di aggiungere il vincolo univoco su prodotto, unità e destinazione.
+
 Per abilitare la parte pasti esegui anche `scripts/meals_schema.sql` dopo lo schema principale.
 
 Nota: lo script crea anche policy RLS permissive per `anon` e `authenticated` per ambiente locale/dev.
